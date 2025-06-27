@@ -85,7 +85,7 @@ jobs:
 
       # 6) 构建所有产物
       - name: Build
-        run: bash scripts/allrelease.sh
+        run: bash ./allrelease.sh
 
       # 7) 发布 Release
       - name: Publish GitHub Release
