@@ -14,5 +14,9 @@
   "cleanmac.link": {
     "English": "Clean macOS cache and other trash files lastest version",
     "Chinese": "清理macOS的垃圾文件,最新版本"
+  },
+  "installbrew.sh": {
+    "English": "Install Homebrew with optional mirror",
+    "Chinese": "安装Homebrew，并可选择国内镜像"
   }
 }
