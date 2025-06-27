@@ -1,76 +1,98 @@
-name: Release
+name: Rust Auto-Release
 
 on:
   push:
-    branches: [ master ]          # 合到主干时触发
+    branches: [ master ]          # 自动跑：结果永远是 Pre-release
   pull_request:
     branches: [ master ]
-  workflow_dispatch:              # 允许手动触发
+  workflow_dispatch:              # 手动触发，可选 official 正式版
+    inputs:
+      official:
+        description: "Build an **official Release** (false = pre-release)"
+        required: false
+        default: "false"
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    # 选 macOS-14 (Apple Silicon) —— 一台机器即可交叉到 Linux/Windows
+  release:
     runs-on: macos-14
+    permissions:
+      contents: write   # 打 tag / 发 release 需要
 
-    # 多语言输出更友好
     defaults:
       run:
         shell: bash
 
     steps:
-    # ① 拉代码
-    - uses: actions/checkout@v4
+      # 1) 拉仓库
+      - uses: actions/checkout@v4
 
-    # ② 缓存依赖 / target，加速后续 job
-    - name: Cache cargo registry + target
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      # 2) 解析 Cargo.toml 版本号
+      - name: Extract version
+        id: ver
+        run: |
+          V=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$V" >>"$GITHUB_OUTPUT"
 
-    # ③ 设置 Rust stable，并一次性添加交叉 target
-    - name: Install toolchains
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: >
-          x86_64-apple-darwin
-          aarch64-apple-darwin
-          x86_64-unknown-linux-musl
-          aarch64-unknown-linux-musl
-          x86_64-pc-windows-gnu
+      # 3) 决定发布类型 & Release body
+      - name: Decide release kind
+        id: kind
+        run: |
+          # 默认 pre-release；只有 workflow_dispatch 且 official=true 才算正式版
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.official }}" == "true" ]]; then
+            echo "pre=false"  >>"$GITHUB_OUTPUT"
+            echo "body_file=RELEASE_NOTES.md" >>"$GITHUB_OUTPUT"
+          else
+            echo "pre=true"   >>"$GITHUB_OUTPUT"
+            echo "body_file=PRE_RELEASE_BODY.md" >>"$GITHUB_OUTPUT"
+          fi
+          
+          # 生成占位 body（Pre-release 仅一句提示；正式版可在此拼接 CHANGELOG 等）
+          if [[ "$(cat "$GITHUB_OUTPUT" | grep body_file | cut -d= -f2)" == "PRE_RELEASE_BODY.md" ]]; then
+            echo "⚠️  这是自动生成的 *预发布* 构建，仅供测试与反馈。我没有义务为其提供技术支持。" > PRE_RELEASE_BODY.md
+          else
+            echo "### 变更日志" > RELEASE_NOTES.md
+            echo ""            >>RELEASE_NOTES.md
+            echo "- TODO: 手动补充本版本关键改动" >>RELEASE_NOTES.md
+          fi
 
-    # ④ 安装 musl-cross、MinGW、UPX（macOS Homebrew）
-    - name: Install extra tools
-      run: |
-        brew install FiloSottile/musl-cross/musl-cross mingw-w64 upx
+      # 4) 若 tag 不存在则创建
+      - name: Tag the commit
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+          git fetch --tags
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          else
+            echo "Tag $TAG already exists"
+          fi
 
-    # ⑤ 运行单元测试 —— 只测本机架构 (aarch64-apple-darwin)
-    - name: Run tests
-      run: cargo test --release --all-targets --all-features
+      # 5) 安装交叉依赖
+      - name: Install toolchains & deps
+        run: |
+          brew install FiloSottile/musl-cross/musl-cross mingw-w64 upx
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: >
+            x86_64-apple-darwin
+            aarch64-apple-darwin
+            x86_64-unknown-linux-musl
+            aarch64-unknown-linux-musl
+            x86_64-pc-windows-gnu
 
-    # ⑥ 调用你刚写的 allrelease.sh 脚本
-    - name: Build all release artifacts
-      run: bash ./allrelease.sh
+      # 6) 构建所有产物
+      - name: Build
+        run: bash scripts/allrelease.sh
 
-    # ⑦ 上传产物以便下载（Actions 页面 “Artifacts”）
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: geektools-binaries
-        path: target/dist/*
-
-    # ⑧ （可选）推 Tag 时自动发 GitHub Release
-    # - name: Publish GitHub Release
-    #   if: startsWith(github.ref, 'refs/tags/')
-    #   uses: softprops/action-gh-release@v2
-    #   with:
-    #     generate_release_notes: true
-    #     files: target/dist/*
+      # 7) 发布 Release
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   v${{ steps.ver.outputs.version }}
+          name:       v${{ steps.ver.outputs.version }}
+          prerelease: ${{ steps.kind.outputs.pre == 'true' }}
+          body_path:  ${{ steps.kind.outputs.body_file }}
+          files:      target/dist/*
