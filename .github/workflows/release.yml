@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    branches: [ master ]          # 合到主干时触发
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:              # 允许手动触发
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    # 选 macOS-14 (Apple Silicon) —— 一台机器即可交叉到 Linux/Windows
+    runs-on: macos-14
+
+    # 多语言输出更友好
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    # ① 拉代码
+    - uses: actions/checkout@v4
+
+    # ② 缓存依赖 / target，加速后续 job
+    - name: Cache cargo registry + target
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    # ③ 设置 Rust stable，并一次性添加交叉 target
+    - name: Install toolchains
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: >
+          x86_64-apple-darwin
+          aarch64-apple-darwin
+          x86_64-unknown-linux-musl
+          aarch64-unknown-linux-musl
+          x86_64-pc-windows-gnu
+
+    # ④ 安装 musl-cross、MinGW、UPX（macOS Homebrew）
+    - name: Install extra tools
+      run: |
+        brew install FiloSottile/musl-cross/musl-cross mingw-w64 upx
+
+    # ⑤ 运行单元测试 —— 只测本机架构 (aarch64-apple-darwin)
+    - name: Run tests
+      run: cargo test --release --all-targets --all-features
+
+    # ⑥ 调用你刚写的 allrelease.sh 脚本
+    - name: Build all release artifacts
+      run: bash scripts/allrelease.sh
+
+    # ⑦ 上传产物以便下载（Actions 页面 “Artifacts”）
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: geektools-binaries
+        path: target/dist/*
+
+    # ⑧ （可选）推 Tag 时自动发 GitHub Release
+    # - name: Publish GitHub Release
+    #   if: startsWith(github.ref, 'refs/tags/')
+    #   uses: softprops/action-gh-release@v2
+    #   with:
+    #     generate_release_notes: true
+    #     files: target/dist/*
