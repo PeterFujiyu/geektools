@@ -58,7 +58,7 @@ jobs:
 
     # ⑥ 调用你刚写的 allrelease.sh 脚本
     - name: Build all release artifacts
-      run: bash scripts/allrelease.sh
+      run: bash ./allrelease.sh
 
     # ⑦ 上传产物以便下载（Actions 页面 “Artifacts”）
     - name: Upload artifacts
