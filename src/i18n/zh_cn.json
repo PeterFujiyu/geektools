@@ -1,0 +1,50 @@
+{
+  "menu": {
+    "title": "=== CLI 菜单 ===",
+    "run_existing_script": "运行现有脚本",
+    "run_script_from_network": "从网络链接运行脚本",
+    "change_language": "修改语言",
+    "exit": "退出",
+    "prompt": "请输入您的选择 (1-4): "
+  },
+  "language_menu": {
+    "title": "=== 语言选择 ===",
+    "english": "英语",
+    "chinese": "中文",
+    "prompt": "请输入您的选择 (1-2): "
+  },
+  "script_execution": {
+    "failed_read_info": "读取 info.json 失败：{}",
+    "invalid_json": "info.json 格式错误：{}",
+    "no_scripts": "没有可用脚本。",
+    "available_scripts": "可用脚本：",
+    "run_prompt": "输入要运行的脚本编号 (1-{})，或输入 'exit' 返回：",
+    "returning": "返回主菜单。",
+    "running_script": "正在运行脚本 `{}`…",
+    "invalid_choice": "无效的选择，请输入 1 到 {} 之间的数字。"
+  },
+  "url_script": {
+    "enter_url": "输入脚本的URL（或输入 'exit' 返回）：",
+    "script_content": "来自 {} 的脚本内容：\n{}",
+    "executing": "正在执行脚本...",
+    "failed_create_temp": "创建临时文件失败：{}",
+    "failed_write": "写入脚本到文件失败：{}",
+    "failed_executable": "设置脚本可执行权限失败：{}",
+    "success": "脚本执行成功！",
+    "failed_status": "脚本执行失败，状态码：{}",
+    "failed_execute": "执行脚本失败：{}",
+    "failed_remove_temp": "警告：删除临时文件失败：{}",
+    "failed_read_content": "读取脚本内容失败：{}",
+    "failed_fetch": "从URL获取脚本失败：{}"
+  },
+  "link_script": {
+    "failed_read": "读取 .link 文件失败：{}",
+    "downloading": "正在从URL下载脚本：{}"
+  },
+  "main": {
+    "welcome": "- 这是一个Rust项目！-",
+    "invalid_choice": "无效的选择，请重试。",
+    "invalid_language": "无效的选择，语言未更改。",
+    "exit_message": "正在退出程序。再见！"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "menu": {
+    "title": "=== CLI Menu ===",
+    "run_existing_script": "Run existing script",
+    "run_script_from_network": "Run script from network link",
+    "change_language": "Change language",
+    "exit": "Exit",
+    "prompt": "Please enter your choice (1-4): "
+  },
+  "language_menu": {
+    "title": "=== Language Selection ===",
+    "english": "English",
+    "chinese": "Chinese",
+    "prompt": "Please enter your choice (1-2): "
+  },
+  "script_execution": {
+    "failed_read_info": "Failed to read info.json: {}",
+    "invalid_json": "Invalid JSON in info.json: {}",
+    "no_scripts": "No available scripts.",
+    "available_scripts": "Available scripts:",
+    "run_prompt": "Enter the number of the script to run (1-{}), or type 'exit' to return: ",
+    "returning": "Returning to main menu.",
+    "running_script": "Running script `{}`...",
+    "invalid_choice": "Invalid choice, please enter a number between 1 and {}."
+  },
+  "url_script": {
+    "enter_url": "Enter the URL of the script (or type 'exit' to return): ",
+    "script_content": "Script content from {}: \n{}",
+    "executing": "Executing script...",
+    "failed_create_temp": "Failed to create temporary file: {}",
+    "failed_write": "Failed to write script to file: {}",
+    "failed_executable": "Failed to make script executable: {}",
+    "success": "Script executed successfully!",
+    "failed_status": "Script execution failed with status: {}",
+    "failed_execute": "Failed to execute script: {}",
+    "failed_remove_temp": "Warning: Failed to remove temporary file: {}",
+    "failed_read_content": "Failed to read script content: {}",
+    "failed_fetch": "Failed to fetch script from URL: {}"
+  },
+  "link_script": {
+    "failed_read": "Failed to read .link file: {}",
+    "downloading": "Downloading script from URL: {}"
+  },
+  "main": {
+    "welcome": "- Hey this a rust project! -",
+    "invalid_choice": "Invalid choice, please try again.",
+    "invalid_language": "Invalid choice, language not changed.",
+    "exit_message": "Exiting program. Goodbye!"
+  }
+}
