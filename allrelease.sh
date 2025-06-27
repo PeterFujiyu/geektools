@@ -3,84 +3,65 @@ set -eo pipefail
 
 PROJECT_NAME="geektools"
 RELEASE_DIR="target/dist"
-TARGETDIR="target"
-UPX_ARGS="--best --lzma"
+UPX_ARGS=(--best --lzma)         # 数组！避免 "--best --lzma" 整串被当成一个参数
 
-# ─── 0. 函数：检测并安装工具 ────────────────────────────────────────────
-need_tool () {
-  local bin=$1 pkg=$2 msg=$3
-  if ! command -v "$bin" >/dev/null 2>&1; then
-      echo "❌  $bin not found. $msg"
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-          echo "➡  Installing via Homebrew: brew install $pkg"
-          brew install "$pkg"
-      else
-          echo "➡  请手动安装：$pkg"
-          echo "Tips: 尝试安装 homebrew 以自动安装"
-          exit 1
-      fi
+# ───── 0. 函数：工具检测 / 自动安装 ────────────────────────────────
+need() {
+  command -v "$1" >/dev/null 2>&1 && return
+  echo "❌  $1 not found — $3"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "➡  brew install $2"
+    brew install "$2"
+  else
+    echo "➡  请手动安装：$2"; echo "Tips:尝试安装Homebrew以自动安装"; exit 1
   fi
 }
 
-# musl 交叉编译链：x86_64-linux-musl, aarch64-linux-musl
-need_tool x86_64-linux-musl-gcc FiloSottile/musl-cross/musl-cross \
-  "编译 x86_64-unknown-linux-musl 目标需要该交叉编译器。"
-need_tool aarch64-linux-musl-gcc FiloSottile/musl-cross/musl-cross \
-  "编译 aarch64-unknown-linux-musl 目标需要该交叉编译器。"
-
-# MinGW-w64（只要拿到 x86_64-w64-mingw32-gcc 即可）
-need_tool x86_64-w64-mingw32-gcc mingw-w64 "编译 Windows 目标需要 MinGW-w64 工具链。"
+# musl 交叉链
+need x86_64-linux-musl-gcc FiloSottile/musl-cross/musl-cross \
+     "编译 x86_64-unknown-linux-musl 需要 musl-gcc"
+need aarch64-linux-musl-gcc FiloSottile/musl-cross/musl-cross \
+     "编译 aarch64-unknown-linux-musl 需要 musl-gcc"
 
 # UPX（可选）
 if command -v upx >/dev/null; then
-    USE_UPX=true
-    echo "🗜  UPX found, Linux/Windows 可执行文件将被压缩。"
+  USE_UPX=true;  echo "🗜  UPX 可用，将压缩 Linux 产物"
 else
-    USE_UPX=false
-    echo "⚠️  UPX not found, 将跳过二进制压缩。"
+  USE_UPX=false; echo "⚠️  未找到 UPX，跳过压缩"
 fi
 
-# ─── 1. 添加 rustup target ────────────────────────────────────────────
-echo "🔍 Checking Rust targets..."
-TARGETS=(
-  x86_64-apple-darwin aarch64-apple-darwin
-  x86_64-unknown-linux-musl aarch64-unknown-linux-musl
-  x86_64-pc-windows-gnu
-)
-for t in "${TARGETS[@]}"; do rustup target add "$t" >/dev/null; done
+# ───── 1. rustup target 确保齐全 ─────────────────────────────────
+rustup target add \
+  x86_64-apple-darwin aarch64-apple-darwin \
+  x86_64-unknown-linux-musl aarch64-unknown-linux-musl >/dev/null
 
-# ─── 2. 清理 ──────────────────────────────────────────────────────────
-echo "🧹 Cleaning old builds..."
-rm -rf "$TARGETDIR"
-mkdir -p "$RELEASE_DIR"
+# ───── 2. 保留编译缓存，仅清理 dist ───────────────────────────────
+echo "🧹 Cleaning old dist..."
+rm -rf "$RELEASE_DIR"; mkdir -p "$RELEASE_DIR"
 
-# ─── 3. 构建函数 ──────────────────────────────────────────────────────
-build () {
+# ───── 3. 构建帮助函数 ───────────────────────────────────────────
+build() {
   local target=$1 out=$2 ext=${3:-}
-  echo "⚒  Building $target ..."
+  echo "⚒  $target"
   cargo build --release --target "$target"
   cp "target/$target/release/$PROJECT_NAME$ext" "$out"
-
-  # macOS 不压缩；其他系统根据 USE_UPX
-  if $USE_UPX && [[ $target != *"apple-darwin"* ]]; then
-      upx $UPX_ARGS "$out"
+  if $USE_UPX && [[ $target == *"-linux-"* ]]; then
+    upx "${UPX_ARGS[@]}" "$out"
   fi
 }
 
-# ─── 4. macOS universal ──────────────────────────────────────────────
+# ───── 4. macOS Universal ────────────────────────────────────────
 build x86_64-apple-darwin  "target/tmp-mac-x64"
 build aarch64-apple-darwin "target/tmp-mac-arm64"
-echo "🦀  Creating macOS universal binary..."
-lipo -create -output "$RELEASE_DIR/${PROJECT_NAME}-macos-universal" \
-     target/tmp-mac-x64 target/tmp-mac-arm64
-rm target/tmp-mac-x64 target/tmp-mac-arm64
+echo "🦀  Lipo macOS universal"
+lipo -create \
+  -output "$RELEASE_DIR/${PROJECT_NAME}-macos-universal" \
+  target/tmp-mac-x64 target/tmp-mac-arm64
+rm target/tmp-mac-*
 
-# ─── 5. Linux ────────────────────────────────────────────────────────
+# ───── 5. Linux (musl 静态) ──────────────────────────────────────
 build x86_64-unknown-linux-musl "$RELEASE_DIR/${PROJECT_NAME}-linux-x64"
 build aarch64-unknown-linux-musl "$RELEASE_DIR/${PROJECT_NAME}-linux-arm64"
 
-# ─── 6. Windows ──────────────────────────────────────────────────────
-build x86_64-pc-windows-gnu "$RELEASE_DIR/${PROJECT_NAME}-win-x64.exe" ".exe"
-
-echo "✅  All artifacts are in $RELEASE_DIR/"
+echo "✅  Artifacts in $RELEASE_DIR"
 ls -lh "$RELEASE_DIR"
