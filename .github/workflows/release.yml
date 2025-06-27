@@ -71,7 +71,7 @@ jobs:
 
       # 5) 构建
       - name: Build artifacts
-        run: bash scripts/allrelease.sh
+        run: bash allrelease.sh
 
       # 6) 发布
       - name: Publish release
