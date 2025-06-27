@@ -63,7 +63,7 @@ build () {
 
   # macOS 不压缩；其他系统根据 USE_UPX
   if $USE_UPX && [[ $target != *"apple-darwin"* ]]; then
-      upx "${UPX_ARGS[@]}" "$out"
+      upx $UPX_ARGS "$out"
   fi
 }
 
