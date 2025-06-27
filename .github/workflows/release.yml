@@ -43,7 +43,7 @@ jobs:
           echo "body=$BODY_FILE"       >>"$GITHUB_OUTPUT"
           # 写入内容
           if $IS_PRE; then
-            echo "⚠️  自动生成的 *预发布* 包，仅供测试反馈。" > PRE.md
+            echo "⚠️  自动生成的 *预发布* 包，我没有义务为其提供技术支持" > PRE.md
           else
             echo "### 变更日志\n\n- TODO: 手动填写改动" > RELEASE.md
           fi
