@@ -156,7 +156,7 @@ fn fetch_releases() -> Result<Vec<GhRelease>, String> {
         .user_agent(format!(
             "geektools/{} (+{})",
             env!("CARGO_PKG_VERSION"),
-            env!("CARGO_PKG_REPOSITORY")
+            "PeterFujiyu/geektools"
         ))
         .build()
         .map_err(|e| format!("构建 client 失败: {e}"))?;
@@ -759,25 +759,6 @@ fn main() {
 
 // 从 Cargo.toml 读取 repository 信息
 fn repo_path_from_cargo() -> Result<String, String> {
-    // 读取 Cargo.toml 文件
-    let cargo_toml_path = Path::new("Cargo.toml");
-    let toml_content = fs::read_to_string(cargo_toml_path).map_err(|e| format!("读取 Cargo.toml 失败: {}", e))?;
-
-    // 解析 Cargo.toml
-    let toml_data: toml::Value = toml::from_str(&toml_content).map_err(|e| format!("解析 Cargo.toml 失败: {}", e))?;
-
-    // 提取 repository 字段
-    let repository = toml_data
-        .get("package")
-        .and_then(|package| package.get("repository"))
-        .and_then(|repository| repository.as_str())
-        .ok_or("Cargo.toml 中缺少 'package.repository' 字段")?;
-
-    // 提取 GitHub 用户名和仓库名
-    let repo_path = repository
-        .trim_start_matches("https://github.com/")
-        .trim_end_matches(".git")
-        .to_string();
-
-    Ok(repo_path)
+    // 在编译时直接获取 repository 字段
+    Ok(env!("CARGO_PKG_REPOSITORY").to_string())
 }
