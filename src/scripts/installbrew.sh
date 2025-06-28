@@ -6,6 +6,30 @@ set -euo pipefail
 # Homebrew 安装助手，支持选择官方或清华镜像
 # ------------------------------------------------------------
 
+# 备份重要文件
+backup_config() {
+  for profile in ~/.bash_profile ~/.zprofile ~/.profile; do
+    if [[ -f $profile ]]; then
+      cp "$profile" "$profile.bak"
+    fi
+  done
+}
+
+# 还原备份
+restore_backup() {
+  for profile in ~/.bash_profile ~/.zprofile ~/.profile; do
+    if [[ -f "$profile.bak" ]]; then
+      mv "$profile.bak" "$profile"
+    fi
+  done
+}
+
+# 失败时自动还原
+trap restore_backup ERR
+
+# 备份配置
+backup_config
+
 if [[ $(id -u) -eq 0 ]]; then
     echo "Please run this script as a regular user, not as root. | 请以普通用户身份运行此脚本，不要使用 root." >&2
     exit 1
@@ -111,6 +135,7 @@ add_brew_to_path() {
     fi
 
     local brew_prefix
+    echo "[DEV] brew cmd is $brew_cmd"
     brew_prefix="$($brew_cmd --prefix)"
     # shellcheck disable=SC2155
     local init_cmd="eval \"$(${brew_prefix}/bin/brew shellenv)\""
@@ -133,5 +158,8 @@ add_brew_to_path() {
 }
 
 add_brew_to_path
+
+# 安装成功则删除备份
+rm -f ~/.bash_profile.bak ~/.zprofile.bak ~/.profile.bak
 
 echo "Installation complete. Please restart your shell. | 安装完成，请重新启动终端"
