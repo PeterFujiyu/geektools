@@ -715,7 +715,7 @@ fn main() {
     let mut app_state = AppState::new();
     println!("{}", app_state.get_translation("main.welcome"));
 
-    println!("{}", app_state.get_formatted_translation("main.version_msg", &[env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_REPOSITORY")]));
+    println!("{}", app_state.get_formatted_translation("main.version_msg", &[env!("CARGO_PKG_VERSION"), format!("https://github.com/{}", env!("CARGO_PKG_REPOSITORY")).as_str()]));
 
     loop {
         print!("{}", app_state.get_menu_text());
