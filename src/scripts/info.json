@@ -18,5 +18,9 @@
   "installbrew.sh": {
     "English": "Install Homebrew with optional mirror",
     "Chinese": "安装Homebrew，并可选择国内镜像"
+  },
+  "installthing.sh": {
+    "English": "Install fortune and cowsay and alias thing",
+    "Chinese": "安装 fortune 和 cowsay 并设置 thing 别名"
   }
 }
