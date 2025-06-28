@@ -11,7 +11,8 @@
 ## What Is This?
 
 - A CLI tool that executes **built-in** shell scripts  
-- A CLI tool that executes shell scripts from **remote URLs**  
+- A CLI tool that executes shell scripts from **remote URLs**
+- Built-in OTA to switch between published versions
 - …and more to come
 
 ## How to Install?

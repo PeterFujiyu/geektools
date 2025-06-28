@@ -4,8 +4,9 @@
     "run_existing_script": "Run existing script",
     "run_script_from_network": "Run script from network link",
     "change_language": "Change language",
+    "change_version": "Change version",
     "exit": "Exit",
-    "prompt": "Please enter your choice (1-4): "
+    "prompt": "Please enter your choice (1-5): "
   },
   "language_menu": {
     "title": "=== Language Selection ===",
@@ -40,6 +41,20 @@
   "link_script": {
     "failed_read": "Failed to read .link file: {}",
     "downloading": "Downloading script from URL: {}"
+  },
+  "update_menu": {
+    "title": "=== Version Switch ===",
+    "latest": "Latest release",
+    "latest_dev": "Latest dev build",
+    "other": "Other versions",
+    "prompt": "Please enter your choice (1-3): ",
+    "select_prompt": "Select a version (1-{}), or type 'exit' to return: ",
+    "downloading": "Downloading version {}...",
+    "not_found": "No binary available for this platform.",
+    "no_release": "No release found.",
+    "download_failed": "Failed to download file: {}",
+    "replace_failed": "Failed to replace executable: {}",
+    "success": "Update complete. Please restart the program."
   },
   "main": {
     "welcome": "- Hey this a rust project! -",
