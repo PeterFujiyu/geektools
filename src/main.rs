@@ -1,5 +1,5 @@
-mod scripts;
 mod i18n;
+mod scripts;
 
 use std::{
     collections::HashMap,
@@ -8,12 +8,13 @@ use std::{
     fs::{self},
     io::{self, Write},
     // path::{Path, PathBuf},
-    path::{Path},
+    path::Path,
     process::{self, Command},
     sync::{Arc, RwLock},
 };
 
 use once_cell::sync::Lazy;
+use serde::Deserialize;
 use serde_json::{self, Value};
 
 // ───────────────────────────────── 语言枚举 ────────────────────────────────
@@ -88,11 +89,12 @@ impl AppState {
     // 主菜单文本
     fn get_menu_text(&self) -> String {
         format!(
-            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n{}",
+            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n5. {}\n{}",
             self.get_translation("menu.title"),
             self.get_translation("menu.run_existing_script"),
             self.get_translation("menu.run_script_from_network"),
             self.get_translation("menu.change_language"),
+            self.get_translation("menu.change_version"),
             self.get_translation("menu.exit"),
             self.get_translation("menu.prompt")
         )
@@ -110,13 +112,187 @@ impl AppState {
     }
 }
 
+#[derive(Deserialize)]
+struct GhAsset {
+    browser_download_url: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct GhRelease {
+    tag_name: String,
+    prerelease: bool,
+    assets: Vec<GhAsset>,
+}
+
+fn fetch_releases() -> Result<Vec<GhRelease>, String> {
+    let client = reqwest::blocking::Client::new();
+    client
+        .get("https://api.github.com/repos/PeterFujiyu/geektools/releases")
+        .header(reqwest::header::USER_AGENT, "geektools")
+        .send()
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json::<Vec<GhRelease>>()
+        .map_err(|e| e.to_string())
+}
+
+fn asset_name() -> Option<&'static str> {
+    match (env::consts::OS, env::consts::ARCH) {
+        ("macos", _) => Some("geektools-macos-universal"),
+        ("linux", "x86_64") => Some("geektools-linux-x64"),
+        ("linux", "aarch64") => Some("geektools-linux-arm64"),
+        _ => None,
+    }
+}
+
+fn download_and_replace(url: &str) -> Result<(), String> {
+    let resp = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
+    let bytes = resp.bytes().map_err(|e| e.to_string())?;
+    let exe = env::current_exe().map_err(|e| e.to_string())?;
+    let mut tmp = exe.clone();
+    tmp.set_extension("tmp");
+    fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755));
+    }
+    fs::rename(&tmp, &exe).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn update_to_release(release: &GhRelease, app_state: &AppState) {
+    let name = match asset_name() {
+        Some(n) => n,
+        None => {
+            println!("{}", app_state.get_translation("update_menu.not_found"));
+            return;
+        }
+    };
+    let asset = match release.assets.iter().find(|a| a.name == name) {
+        Some(a) => a,
+        None => {
+            println!("{}", app_state.get_translation("update_menu.not_found"));
+            return;
+        }
+    };
+    println!(
+        "{}",
+        app_state.get_formatted_translation("update_menu.downloading", &[&release.tag_name])
+    );
+    match download_and_replace(&asset.browser_download_url) {
+        Ok(_) => println!("{}", app_state.get_translation("update_menu.success")),
+        Err(e) => println!(
+            "{}",
+            app_state.get_formatted_translation("update_menu.replace_failed", &[&e])
+        ),
+    }
+}
+
+fn update_to_latest(prerelease: bool, app_state: &AppState) {
+    match fetch_releases() {
+        Ok(releases) => {
+            if let Some(rel) = releases.into_iter().find(|r| r.prerelease == prerelease) {
+                update_to_release(&rel, app_state);
+            } else {
+                println!("{}", app_state.get_translation("update_menu.no_release"));
+            }
+        }
+        Err(e) => println!(
+            "{}",
+            app_state.get_formatted_translation("update_menu.download_failed", &[&e])
+        ),
+    }
+}
+
+fn choose_other(app_state: &AppState) {
+    match fetch_releases() {
+        Ok(releases) => {
+            let list: Vec<GhRelease> = releases.into_iter().filter(|r| !r.prerelease).collect();
+            if list.is_empty() {
+                println!("{}", app_state.get_translation("update_menu.no_release"));
+                return;
+            }
+            for (i, r) in list.iter().enumerate() {
+                println!("{}. {}", i + 1, r.tag_name);
+            }
+            let prompt = app_state
+                .get_formatted_translation("update_menu.select_prompt", &[&list.len().to_string()]);
+            loop {
+                print!("{}", prompt);
+                let _ = io::stdout().flush();
+                let mut input = String::new();
+                if io::stdin().read_line(&mut input).is_err() {
+                    println!("{}", app_state.get_translation("main.invalid_choice"));
+                    continue;
+                }
+                let trimmed = input.trim();
+                if trimmed.eq_ignore_ascii_case("exit") {
+                    return;
+                }
+                if let Ok(idx) = trimmed.parse::<usize>() {
+                    if (1..=list.len()).contains(&idx) {
+                        let rel = &list[idx - 1];
+                        update_to_release(rel, app_state);
+                        return;
+                    }
+                }
+                println!("{}", app_state.get_translation("main.invalid_choice"));
+            }
+        }
+        Err(e) => println!(
+            "{}",
+            app_state.get_formatted_translation("update_menu.download_failed", &[&e])
+        ),
+    }
+}
+
+fn change_version(app_state: &AppState) {
+    loop {
+        println!(
+            "\n{}\n1. {}\n2. {}\n3. {}",
+            app_state.get_translation("update_menu.title"),
+            app_state.get_translation("update_menu.latest"),
+            app_state.get_translation("update_menu.latest_dev"),
+            app_state.get_translation("update_menu.other")
+        );
+        print!("{}", app_state.get_translation("update_menu.prompt"));
+        let _ = io::stdout().flush();
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            println!("{}", app_state.get_translation("main.invalid_choice"));
+            continue;
+        }
+        match input.trim() {
+            "1" => {
+                update_to_latest(false, app_state);
+                break;
+            }
+            "2" => {
+                update_to_latest(true, app_state);
+                break;
+            }
+            "3" => {
+                choose_other(app_state);
+                break;
+            }
+            _ => println!("{}", app_state.get_translation("main.invalid_choice")),
+        }
+    }
+}
+
 // ──────────────────────────────── 运行本地脚本 ─────────────────────────────
 fn run_existing_script(app_state: &AppState) {
     // 1. 读取 info.json（已打包进二进制）
     let data = match scripts::get_string("info.json") {
         Some(s) => s,
         None => {
-            println!("{}", app_state.get_translation("script_execution.no_scripts"));
+            println!(
+                "{}",
+                app_state.get_translation("script_execution.no_scripts")
+            );
             return;
         }
     };
@@ -126,7 +302,8 @@ fn run_existing_script(app_state: &AppState) {
         Err(e) => {
             println!(
                 "{}",
-                app_state.get_formatted_translation("script_execution.invalid_json", &[&e.to_string()])
+                app_state
+                    .get_formatted_translation("script_execution.invalid_json", &[&e.to_string()])
             );
             return;
         }
@@ -134,13 +311,19 @@ fn run_existing_script(app_state: &AppState) {
     let map = match info.as_object() {
         Some(m) if !m.is_empty() => m,
         _ => {
-            println!("{}", app_state.get_translation("script_execution.no_scripts"));
+            println!(
+                "{}",
+                app_state.get_translation("script_execution.no_scripts")
+            );
             return;
         }
     };
 
     // 2. 展示脚本列表
-    println!("{}", app_state.get_translation("script_execution.available_scripts"));
+    println!(
+        "{}",
+        app_state.get_translation("script_execution.available_scripts")
+    );
     let names: Vec<&String> = map.keys().collect();
     for (i, name) in names.iter().enumerate() {
         let desc = map
@@ -157,10 +340,8 @@ fn run_existing_script(app_state: &AppState) {
     }
 
     // 3. 处理用户选择
-    let prompt = app_state.get_formatted_translation(
-        "script_execution.run_prompt",
-        &[&names.len().to_string()],
-    );
+    let prompt = app_state
+        .get_formatted_translation("script_execution.run_prompt", &[&names.len().to_string()]);
     loop {
         print!("{}", prompt);
         let _ = io::stdout().flush();
@@ -171,7 +352,10 @@ fn run_existing_script(app_state: &AppState) {
         }
         let input = input.trim();
         if input.eq_ignore_ascii_case("exit") {
-            println!("{}", app_state.get_translation("script_execution.returning"));
+            println!(
+                "{}",
+                app_state.get_translation("script_execution.returning")
+            );
             return;
         }
         if let Ok(idx) = input.parse::<usize>() {
@@ -179,7 +363,10 @@ fn run_existing_script(app_state: &AppState) {
                 let script_name = names[idx - 1];
                 println!(
                     "{}",
-                    app_state.get_formatted_translation("script_execution.running_script", &[script_name])
+                    app_state.get_formatted_translation(
+                        "script_execution.running_script",
+                        &[script_name]
+                    )
                 );
 
                 // 将脚本释放到临时目录
@@ -188,8 +375,10 @@ fn run_existing_script(app_state: &AppState) {
                     Err(e) => {
                         println!(
                             "{}",
-                            app_state.get_formatted_translation("script_execution.failed_read_info",
-                                                                &[&e.to_string()])
+                            app_state.get_formatted_translation(
+                                "script_execution.failed_read_info",
+                                &[&e.to_string()]
+                            )
                         );
                         return;
                     }
@@ -205,8 +394,10 @@ fn run_existing_script(app_state: &AppState) {
         }
         println!(
             "{}",
-            app_state.get_formatted_translation("script_execution.invalid_choice",
-                                                &[&names.len().to_string()])
+            app_state.get_formatted_translation(
+                "script_execution.invalid_choice",
+                &[&names.len().to_string()]
+            )
         );
     }
 }
@@ -279,7 +470,8 @@ fn run_link_script(path: &Path, app_state: &AppState) {
         Err(e) => {
             println!(
                 "{}",
-                app_state.get_formatted_translation("url_script.failed_read_content", &[&e.to_string()])
+                app_state
+                    .get_formatted_translation("url_script.failed_read_content", &[&e.to_string()])
             );
             return;
         }
@@ -303,7 +495,8 @@ fn run_link_script(path: &Path, app_state: &AppState) {
         if let Err(e) = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o755)) {
             println!(
                 "{}",
-                app_state.get_formatted_translation("url_script.failed_executable", &[&e.to_string()])
+                app_state
+                    .get_formatted_translation("url_script.failed_executable", &[&e.to_string()])
             );
         }
     }
@@ -345,7 +538,10 @@ fn run_script_from_url(app_state: &AppState) {
     }
     let url_trimmed = url.trim();
     if url_trimmed.eq_ignore_ascii_case("exit") {
-        println!("{}", app_state.get_translation("script_execution.returning"));
+        println!(
+            "{}",
+            app_state.get_translation("script_execution.returning")
+        );
         return;
     }
 
@@ -354,8 +550,10 @@ fn run_script_from_url(app_state: &AppState) {
             Ok(script_content) => {
                 println!(
                     "{}",
-                    app_state.get_formatted_translation("url_script.script_content",
-                                                        &[url_trimmed, &script_content])
+                    app_state.get_formatted_translation(
+                        "url_script.script_content",
+                        &[url_trimmed, &script_content]
+                    )
                 );
 
                 // 落盘 → chmod → 执行
@@ -365,8 +563,10 @@ fn run_script_from_url(app_state: &AppState) {
                 if let Err(e) = fs::write(&tmp_path, script_content.as_bytes()) {
                     println!(
                         "{}",
-                        app_state.get_formatted_translation("url_script.failed_write",
-                                                            &[&e.to_string()])
+                        app_state.get_formatted_translation(
+                            "url_script.failed_write",
+                            &[&e.to_string()]
+                        )
                     );
                     return;
                 }
@@ -378,22 +578,31 @@ fn run_script_from_url(app_state: &AppState) {
 
                 let status = execute_script(&tmp_path);
                 match status {
-                    Ok(s) if s.success() =>
-                        println!("{}", app_state.get_translation("url_script.success")),
-                    Ok(s) =>
-                        println!("{}", app_state.get_formatted_translation("url_script.failed_status",
-                                                                           &[&s.to_string()])),
-                    Err(e) =>
-                        println!("{}", app_state.get_formatted_translation("url_script.failed_execute",
-                                                                           &[&e.to_string()])),
+                    Ok(s) if s.success() => {
+                        println!("{}", app_state.get_translation("url_script.success"))
+                    }
+                    Ok(s) => println!(
+                        "{}",
+                        app_state.get_formatted_translation(
+                            "url_script.failed_status",
+                            &[&s.to_string()]
+                        )
+                    ),
+                    Err(e) => println!(
+                        "{}",
+                        app_state.get_formatted_translation(
+                            "url_script.failed_execute",
+                            &[&e.to_string()]
+                        )
+                    ),
                 }
 
                 let _ = fs::remove_file(&tmp_path);
             }
             Err(e) => println!(
                 "{}",
-                app_state.get_formatted_translation("url_script.failed_read_content",
-                                                    &[&e.to_string()])
+                app_state
+                    .get_formatted_translation("url_script.failed_read_content", &[&e.to_string()])
             ),
         },
         Err(e) => println!(
@@ -436,7 +645,8 @@ fn main() {
                     _ => println!("{}", app_state.get_translation("main.invalid_language")),
                 }
             }
-            "4" => {
+            "4" => change_version(&app_state),
+            "5" => {
                 println!("{}", app_state.get_translation("main.exit_message"));
                 process::exit(0);
             }

@@ -218,6 +218,7 @@ dependencies = [
  "rand",
  "reqwest",
  "rust-embed",
+ "serde",
  "serde_json",
 ]
 
