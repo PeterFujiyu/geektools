@@ -112,6 +112,7 @@ add_brew_to_path() {
 
     local brew_prefix
     brew_prefix="$($brew_cmd --prefix)"
+    # shellcheck disable=SC2155
     local init_cmd="eval \"$(${brew_prefix}/bin/brew shellenv)\""
 
     echo "Adding Homebrew to PATH... | 正在将 Homebrew 加入 PATH..."
@@ -124,7 +125,11 @@ add_brew_to_path() {
         fi
     done
 
+    # 关键修改 ──────────────────────────────────────────
+    # 先关闭 -u，执行完再恢复
+    set +u
     eval "$init_cmd"
+    set -u
 }
 
 add_brew_to_path
