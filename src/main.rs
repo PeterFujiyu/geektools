@@ -75,7 +75,12 @@ impl AppState {
     fn get_formatted_translation(&self, key_path: &str, args: &[&str]) -> String {
         let mut result = self.get_translation(key_path);
         for (i, arg) in args.iter().enumerate() {
-            result = result.replace(&format!("{{{}}}", i), arg);
+            let numbered = format!("{{{}}}", i);
+            if result.contains(&numbered) {
+                result = result.replace(&numbered, arg);
+            } else if result.contains("{}") {
+                result = result.replacen("{}", arg, 1);
+            }
         }
         result
     }

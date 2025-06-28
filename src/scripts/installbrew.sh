@@ -13,6 +13,26 @@ fi
 
 if command -v brew >/dev/null 2>&1; then
     echo "Homebrew is already installed. | Homebrew 已安装"
+    read -r -p "Uninstall Homebrew? [y/N]: | 是否卸载 Homebrew？[y/N] " uninst
+    if [[ "$uninst" == "y" || "$uninst" == "Y" ]]; then
+        echo "Choose uninstall script source: | 请选择卸载脚本源："
+        echo "1) Official (GitHub) | 1) 官方源（GitHub）"
+        echo "2) Tsinghua mirror (mainland China users) | 2) 清华镜像（中国大陆用户）"
+        read -r -p "Enter choice [1/2] (default 1): | 请输入选择 [1/2]（默认为1）：" c2
+        c2=${c2:-1}
+        case "$c2" in
+            1)
+                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)" ;;
+            2)
+                git clone --depth=1 https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/install.git brew-install
+                /bin/bash brew-install/uninstall.sh --force
+                rm -rf brew-install ;;
+            *)
+                echo "Invalid choice. | 无效的选择" >&2
+                exit 1 ;;
+        esac
+        echo "Uninstallation complete. | 卸载完成"
+    fi
     exit 0
 fi
 
@@ -76,9 +96,23 @@ INSTALL
 
 # Add Homebrew to PATH
 add_brew_to_path() {
+    local brew_cmd
+    if command -v brew >/dev/null 2>&1; then
+        brew_cmd="$(command -v brew)"
+    elif [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
+        brew_cmd="/home/linuxbrew/.linuxbrew/bin/brew"
+    elif [[ -x /opt/homebrew/bin/brew ]]; then
+        brew_cmd="/opt/homebrew/bin/brew"
+    elif [[ -x /usr/local/bin/brew ]]; then
+        brew_cmd="/usr/local/bin/brew"
+    else
+        echo "brew command not found after installation" >&2
+        return 1
+    fi
+
     local brew_prefix
-    brew_prefix="$(brew --prefix)"
-    local init_cmd="eval \"\$(${brew_prefix}/bin/brew shellenv)\""
+    brew_prefix="$($brew_cmd --prefix)"
+    local init_cmd="eval \"$(${brew_prefix}/bin/brew shellenv)\""
 
     echo "Adding Homebrew to PATH... | 正在将 Homebrew 加入 PATH..."
 
