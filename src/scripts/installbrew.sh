@@ -2,22 +2,22 @@
 set -euo pipefail
 
 # ------------------------------------------------------------
-# Homebrew installation helper with optional mirror support
+# Homebrew installation helper with optional mirror support 
 # Homebrew 安装助手，支持选择官方或清华镜像
 # ------------------------------------------------------------
 
 # 备份重要文件
 backup_config() {
-  for profile in ~/.bash_profile ~/.zprofile ~/.profile; do
+  for profile in ~/.bashrc ~/.zshrc; do
     if [[ -f $profile ]]; then
       cp "$profile" "$profile.bak"
     fi
   done
 }
 
-# 还原备份
+# 还原备份 
 restore_backup() {
-  for profile in ~/.bash_profile ~/.zprofile ~/.profile; do
+  for profile in ~/.bashrc ~/.zshrc; do
     if [[ -f "$profile.bak" ]]; then
       mv "$profile.bak" "$profile"
     fi
@@ -31,7 +31,7 @@ trap restore_backup ERR
 backup_config
 
 if [[ $(id -u) -eq 0 ]]; then
-    echo "Please run this script as a regular user, not as root. | 请以普通用户身份运行此脚本，不要使用 root." >&2
+    echo "Please run this script as a regular user, not as root. | 请以普通用户身份运行此脚本，不要使用 root." >&2 
     exit 1
 fi
 
@@ -142,7 +142,7 @@ add_brew_to_path() {
 
     echo "Adding Homebrew to PATH... | 正在将 Homebrew 加入 PATH..."
 
-    for profile in ~/.bash_profile ~/.zprofile ~/.profile; do
+    for profile in ~/.bashrc ~/.zshrc; do
         if [[ -f $profile ]]; then
             if ! grep -F "${brew_prefix}/bin/brew shellenv" "$profile" >/dev/null 2>&1; then
                 echo "$init_cmd" >> "$profile"
@@ -160,6 +160,6 @@ add_brew_to_path() {
 add_brew_to_path
 
 # 安装成功则删除备份
-rm -f ~/.bash_profile.bak ~/.zprofile.bak ~/.profile.bak
+rm -f ~/.bashrc.bak ~/.zshrc.bak
 
 echo "Installation complete. Please restart your shell. | 安装完成，请重新启动终端"

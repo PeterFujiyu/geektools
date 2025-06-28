@@ -366,6 +366,7 @@ fn run_existing_script(app_state: &AppState) {
 
     // 重新创建空目录，忽略已存在的错误
     let _ = fs::create_dir_all(&tmp_path);
+    println!("清理成功 ✅");
     // 1. 读取 info.json（已打包进二进制）
     let data = match scripts::get_string("info.json") {
         Some(s) => s,
