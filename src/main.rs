@@ -12,7 +12,7 @@ use std::{
     process::{self, Command},
     sync::{Arc, RwLock},
 };
-
+use std::io::BufRead;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde_json::{self, Value};
@@ -210,7 +210,7 @@ fn update_to_latest(prerelease: bool, app_state: &AppState) {
 fn choose_other(app_state: &AppState) {
     match fetch_releases() {
         Ok(releases) => {
-            let list: Vec<GhRelease> = releases.into_iter().filter(|r| !r.prerelease).collect();
+            let list: Vec<GhRelease> = releases.into_iter().filter(|r| r.prerelease).collect();
             if list.is_empty() {
                 println!("{}", app_state.get_translation("update_menu.no_release"));
                 return;
@@ -285,6 +285,21 @@ fn change_version(app_state: &AppState) {
 
 // ──────────────────────────────── 运行本地脚本 ─────────────────────────────
 fn run_existing_script(app_state: &AppState) {
+    // 0. 清理缓存
+    use std::{env, fs};
+
+    let mut tmp_path = env::temp_dir();
+    tmp_path.push("geektools");
+
+    // 如果缓存目录存在则递归删除
+    if tmp_path.exists() {
+        if let Err(e) = fs::remove_dir_all(&tmp_path) {
+            eprintln!("⚠️  无法删除旧缓存目录 {:?}: {e}", tmp_path);
+        }
+    }
+
+    // 重新创建空目录，忽略已存在的错误
+    let _ = fs::create_dir_all(&tmp_path);
     // 1. 读取 info.json（已打包进二进制）
     let data = match scripts::get_string("info.json") {
         Some(s) => s,
@@ -438,6 +453,22 @@ fn run_sh_script(path: &Path, app_state: &AppState) {
 
 // 处理 .link —— 下载远程脚本后执行
 fn run_link_script(path: &Path, app_state: &AppState) {
+    // 0. 清理缓存
+    use std::{env, fs};
+
+    let mut tmp_path = env::temp_dir();
+    tmp_path.push("geektools");
+
+    // 如果缓存目录存在则递归删除
+    if tmp_path.exists() {
+        if let Err(e) = fs::remove_dir_all(&tmp_path) {
+            eprintln!("⚠️  无法删除旧缓存目录 {:?}: {e}", tmp_path);
+        }
+    }
+
+    // 重新创建空目录，忽略已存在的错误
+    let _ = fs::create_dir_all(&tmp_path);
+
     // 1. 读取 URL
     let url = match fs::read_to_string(path) {
         Ok(s) => s.trim().to_string(),
@@ -478,7 +509,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
     };
 
     // 3. 写入临时文件
-    let mut tmp_path = env::temp_dir();
+    
     let file_name = format!("script_{}.sh", rand::random::<u64>());
     tmp_path.push(file_name);
     if let Err(e) = fs::write(&tmp_path, &content) {
@@ -613,46 +644,102 @@ fn run_script_from_url(app_state: &AppState) {
 }
 
 // ─────────────────────────────────── 主函数 ───────────────────────────────
+
 fn main() {
     let mut app_state = AppState::new();
+
+    // 欢迎与版本
     println!("{}", app_state.get_translation("main.welcome"));
+    let version = env!("CARGO_PKG_VERSION");
+    println!(
+        "{}",
+        app_state.get_formatted_translation("main.version_msg", &[version])
+    );
+
+    // 统一的输入锁
+    let stdin = io::stdin();
+    let mut stdin_lock = stdin.lock();
 
     loop {
+        // 打印主菜单
         print!("{}", app_state.get_menu_text());
-        let _ = io::stdout().flush();
+        io::stdout().flush().ok();
 
-        let mut choice = String::new();
-        if io::stdin().read_line(&mut choice).is_err() {
-            println!("{}", app_state.get_translation("main.invalid_choice"));
+        // 读取用户输入
+        let mut line = String::new();
+        if stdin_lock.read_line(&mut line).is_err() {
+            eprintln!("{}", app_state.get_translation("main.invalid_choice"));
             continue;
         }
 
-        match choice.trim() {
-            "1" => run_existing_script(&app_state),
-            "2" => run_script_from_url(&app_state),
-            "3" => {
-                print!("{}", app_state.get_language_menu_text());
-                let _ = io::stdout().flush();
+        // 将输入映射到枚举
+        let action = MenuAction::try_from(line.trim()).unwrap_or(MenuAction::Invalid);
 
-                let mut lang_choice = String::new();
-                if io::stdin().read_line(&mut lang_choice).is_err() {
-                    println!("{}", app_state.get_translation("main.invalid_choice"));
-                    continue;
-                }
-                match lang_choice.trim() {
-                    "1" => app_state.language = Language::English,
-                    "2" => app_state.language = Language::Chinese,
-                    _ => println!("{}", app_state.get_translation("main.invalid_language")),
-                }
-            }
-            "4" => change_version(&app_state),
-            "5" => {
+        match action {
+            MenuAction::RunLocal  => run_existing_script(&app_state),
+            MenuAction::RunUrl    => run_script_from_url(&app_state),
+            MenuAction::Lang      => change_language(&mut app_state, &stdin),
+            MenuAction::ChangeVer => change_version(&app_state),
+            MenuAction::Exit      => {
                 println!("{}", app_state.get_translation("main.exit_message"));
                 process::exit(0);
             }
-            _ => println!("{}", app_state.get_translation("main.invalid_choice")),
+            MenuAction::Invalid   => println!("{}", app_state.get_translation("main.invalid_choice")),
         }
 
         println!(); // 空行，美观
+    }
+}
+
+// ──────────────────────────────── 菜单动作 ────────────────────────────────
+#[derive(Debug)]
+enum MenuAction {
+    RunLocal,
+    RunUrl,
+    Lang,
+    ChangeVer,
+    Exit,
+    Invalid,
+}
+
+// 兼容旧实现：从 Option<u8>（首字节）转枚举
+impl From<Option<u8>> for MenuAction {
+    fn from(b: Option<u8>) -> Self {
+        match b {
+            Some(b'1') => Self::RunLocal,
+            Some(b'2') => Self::RunUrl,
+            Some(b'3') => Self::Lang,
+            Some(b'4') => Self::ChangeVer,
+            Some(b'5') => Self::Exit,
+            _ => Self::Invalid,
+        }
+    }
+}
+
+// 新实现：直接把整行字符串映射为枚举
+impl TryFrom<&str> for MenuAction {
+    type Error = ();
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        let first = s.as_bytes().first().copied();
+        Ok(MenuAction::from(first))
+    }
+}
+
+// ──────────────────────────────── 语言切换 ────────────────────────────────
+fn change_language(app_state: &mut AppState, stdin: &io::Stdin) {
+    print!("{}", app_state.get_language_menu_text());
+    let _ = io::stdout().flush();
+
+    let mut line = String::new();
+    if stdin.read_line(&mut line).is_err() {
+        println!("{}", app_state.get_translation("main.invalid_choice"));
+        return;
+    }
+
+    match line.trim() {
+        "1" => app_state.language = Language::English,
+        "2" => app_state.language = Language::Chinese,
+        _   => println!("{}", app_state.get_translation("main.invalid_language")),
     }
 }
