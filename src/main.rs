@@ -206,9 +206,28 @@ fn run_existing_script(app_state: &AppState) {
     }
 }
 
+// 根据脚本的 shebang 选择解释器执行脚本
+fn execute_script(path: &Path) -> io::Result<process::ExitStatus> {
+    if let Ok(content) = fs::read_to_string(path) {
+        if let Some(first_line) = content.lines().next() {
+            if let Some(stripped) = first_line.strip_prefix("#!") {
+                let parts: Vec<&str> = stripped.trim().split_whitespace().collect();
+                if let Some(program) = parts.first() {
+                    let mut cmd = Command::new(program);
+                    for arg in &parts[1..] {
+                        cmd.arg(arg);
+                    }
+                    return cmd.arg(path).status();
+                }
+            }
+        }
+    }
+    Command::new("sh").arg(path).status()
+}
+
 // 直接执行 .sh
 fn run_sh_script(path: &Path, app_state: &AppState) {
-    match Command::new("sh").arg(path).status() {
+    match execute_script(path) {
         Ok(status) if !status.success() => println!(
             "{}",
             app_state.get_formatted_translation("url_script.failed_status", &[&status.to_string()])
@@ -286,7 +305,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
 
     // 5. 执行
     println!("{}", app_state.get_translation("url_script.executing"));
-    match Command::new("sh").arg(&tmp_path).status() {
+    match execute_script(&tmp_path) {
         Ok(status) if status.success() => {
             println!("{}", app_state.get_translation("url_script.success"));
         }
@@ -352,7 +371,7 @@ fn run_script_from_url(app_state: &AppState) {
                     let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o755));
                 }
 
-                let status = Command::new("sh").arg(&tmp_path).status();
+                let status = execute_script(&tmp_path);
                 match status {
                     Ok(s) if s.success() =>
                         println!("{}", app_state.get_translation("url_script.success")),
