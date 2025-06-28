@@ -129,4 +129,10 @@ add_brew_to_path() {
 
 add_brew_to_path
 
+{
+  set +u
+  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+  set -u
+}
+
 echo "Installation complete. Please restart your shell. | 安装完成，请重新启动终端"
