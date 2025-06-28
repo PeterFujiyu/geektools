@@ -12,10 +12,28 @@ use std::{
     process::{self, Command},
     sync::{Arc, RwLock},
 };
-use std::io::BufRead;
+
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde_json::{self, Value};
+
+// ────────────────────────────────────────────────────────────────────────────
+// 1️⃣ 统一的调试宏：只在 DEBUG 文件开启时打印
+// ────────────────────────────────────────────────────────────────────────────
+static DEBUG_ENABLED: Lazy<bool> = Lazy::new(|| {
+    fs::read_to_string("DEBUG")
+        .map(|s| s.trim() == "DEBUG=true")
+        .unwrap_or(false)
+});
+
+macro_rules! debug_log {
+    ($($arg:tt)*) => {
+        if *DEBUG_ENABLED {
+            // 直接写 stdout，避免被上层 logger 截断
+            let _ = writeln!(std::io::stdout(), $($arg)*);
+        }
+    };
+}
 
 // ───────────────────────────────── 语言枚举 ────────────────────────────────
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,17 +143,39 @@ struct GhRelease {
     assets: Vec<GhAsset>,
 }
 
+/// 调试版：获取 GitHub Releases（正式 + 预发布），并在控制台输出全过程。
+// ────────────────────────────────────────────────────────────────────────────
+// 2️⃣ fetch_releases 内全部 println! → debug_log!
+// ────────────────────────────────────────────────────────────────────────────
 fn fetch_releases() -> Result<Vec<GhRelease>, String> {
-    let client = reqwest::blocking::Client::new();
-    client
-        .get("https://api.github.com/repos/PeterFujiyu/geektools/releases")
-        .header(reqwest::header::USER_AGENT, "geektools")
-        .send()
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json::<Vec<GhRelease>>()
-        .map_err(|e| e.to_string())
+    let repo = repo_path_from_cargo()?;
+    let url  = format!("https://api.github.com/repos/{repo}/releases");
+    debug_log!("[DEBUG] 即将请求 GitHub API: {url}");
+
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(format!(
+            "geektools/{} (+{})",
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_REPOSITORY")
+        ))
+        .build()
+        .map_err(|e| format!("构建 client 失败: {e}"))?;
+
+    let resp = client.get(&url).send().map_err(|e| format!("请求失败: {e}"))?;
+    debug_log!("[DEBUG] 收到响应，状态码: {}", resp.status());
+
+    if !resp.status().is_success() {
+        return Err(format!("HTTP 非成功状态: {}", resp.status()));
+    }
+
+    let text = resp.text().map_err(|e| format!("读取响应正文失败: {e}"))?;
+    debug_log!("[DEBUG] 响应体长度: {}", text.len());
+
+    let releases: Vec<GhRelease> =
+        serde_json::from_str(&text).map_err(|e| format!("JSON 解析失败: {e}"))?;
+    debug_log!("[DEBUG] 解析成功，共 {} 条", releases.len());
+
+    Ok(releases)
 }
 
 fn asset_name() -> Option<&'static str> {
@@ -207,45 +247,71 @@ fn update_to_latest(prerelease: bool, app_state: &AppState) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// choose_other 加一行 DEBUG，让我们知道 fetch_releases 是否正常返回
+// ---------------------------------------------------------------------------
+// ────────────────────────────────────────────────────────────────────────────
+// 3️⃣ choose_other 开头同样替换
+// ────────────────────────────────────────────────────────────────────────────
 fn choose_other(app_state: &AppState) {
+    debug_log!("[DEBUG] 进入 choose_other()");
     match fetch_releases() {
-        Ok(releases) => {
-            let list: Vec<GhRelease> = releases.into_iter().filter(|r| r.prerelease).collect();
-            if list.is_empty() {
+        Ok(mut releases) => {
+            debug_log!("[DEBUG] fetch_releases() 成功，数量: {}", releases.len());
+            // 如果一个都没有就直接返回
+            if releases.is_empty() {
                 println!("{}", app_state.get_translation("update_menu.no_release"));
                 return;
             }
-            for (i, r) in list.iter().enumerate() {
-                println!("{}. {}", i + 1, r.tag_name);
+
+            // 根据 tag 名倒序，让最新的排在最前面（可按需要改成基于发布时间）
+            releases.sort_by(|a, b| b.tag_name.cmp(&a.tag_name));
+
+            // 输出版本列表，预发布版额外标记一下
+            for (i, r) in releases.iter().enumerate() {
+                if r.prerelease {
+                    println!("{}. {} (prerelease)", i + 1, r.tag_name);
+                } else {
+                    println!("{}. {}", i + 1, r.tag_name);
+                }
             }
+
             let prompt = app_state
-                .get_formatted_translation("update_menu.select_prompt", &[&list.len().to_string()]);
+                .get_formatted_translation("update_menu.select_prompt", &[&releases.len().to_string()]);
+
             loop {
                 print!("{}", prompt);
                 let _ = io::stdout().flush();
+
                 let mut input = String::new();
                 if io::stdin().read_line(&mut input).is_err() {
                     println!("{}", app_state.get_translation("main.invalid_choice"));
                     continue;
                 }
+
                 let trimmed = input.trim();
                 if trimmed.eq_ignore_ascii_case("exit") {
                     return;
                 }
+
                 if let Ok(idx) = trimmed.parse::<usize>() {
-                    if (1..=list.len()).contains(&idx) {
-                        let rel = &list[idx - 1];
+                    if (1..=releases.len()).contains(&idx) {
+                        let rel = &releases[idx - 1];
                         update_to_release(rel, app_state);
                         return;
                     }
                 }
+
                 println!("{}", app_state.get_translation("main.invalid_choice"));
             }
         }
-        Err(e) => println!(
-            "{}",
-            app_state.get_formatted_translation("update_menu.download_failed", &[&e])
-        ),
+        Err(e) => {
+            eprintln!("[DEBUG] fetch_releases() 失败: {e}");
+            println!(
+                "{}",
+                app_state.get_formatted_translation("update_menu.download_failed", &[&e])
+            );
+        }
     }
 }
 
@@ -647,99 +713,71 @@ fn run_script_from_url(app_state: &AppState) {
 
 fn main() {
     let mut app_state = AppState::new();
-
-    // 欢迎与版本
     println!("{}", app_state.get_translation("main.welcome"));
-    let version = env!("CARGO_PKG_VERSION");
-    println!(
-        "{}",
-        app_state.get_formatted_translation("main.version_msg", &[version])
-    );
 
-    // 统一的输入锁
-    let stdin = io::stdin();
-    let mut stdin_lock = stdin.lock();
+    println!("{}", app_state.get_formatted_translation("main.version_msg", &[env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_REPOSITORY")]));
 
     loop {
-        // 打印主菜单
         print!("{}", app_state.get_menu_text());
-        io::stdout().flush().ok();
+        let _ = io::stdout().flush();
 
-        // 读取用户输入
-        let mut line = String::new();
-        if stdin_lock.read_line(&mut line).is_err() {
-            eprintln!("{}", app_state.get_translation("main.invalid_choice"));
+        let mut choice = String::new();
+        if io::stdin().read_line(&mut choice).is_err() {
+            println!("{}", app_state.get_translation("main.invalid_choice"));
             continue;
         }
 
-        // 将输入映射到枚举
-        let action = MenuAction::try_from(line.trim()).unwrap_or(MenuAction::Invalid);
+        match choice.trim() {
+            "1" => run_existing_script(&app_state),
+            "2" => run_script_from_url(&app_state),
+            "3" => {
+                print!("{}", app_state.get_language_menu_text());
+                let _ = io::stdout().flush();
 
-        match action {
-            MenuAction::RunLocal  => run_existing_script(&app_state),
-            MenuAction::RunUrl    => run_script_from_url(&app_state),
-            MenuAction::Lang      => change_language(&mut app_state, &stdin),
-            MenuAction::ChangeVer => change_version(&app_state),
-            MenuAction::Exit      => {
+                let mut lang_choice = String::new();
+                if io::stdin().read_line(&mut lang_choice).is_err() {
+                    println!("{}", app_state.get_translation("main.invalid_choice"));
+                    continue;
+                }
+                match lang_choice.trim() {
+                    "1" => app_state.language = Language::English,
+                    "2" => app_state.language = Language::Chinese,
+                    _ => println!("{}", app_state.get_translation("main.invalid_language")),
+                }
+            }
+            "4" => change_version(&app_state),
+            "5" => {
                 println!("{}", app_state.get_translation("main.exit_message"));
                 process::exit(0);
             }
-            MenuAction::Invalid   => println!("{}", app_state.get_translation("main.invalid_choice")),
+            _ => println!("{}", app_state.get_translation("main.invalid_choice")),
         }
 
         println!(); // 空行，美观
     }
 }
 
-// ──────────────────────────────── 菜单动作 ────────────────────────────────
-#[derive(Debug)]
-enum MenuAction {
-    RunLocal,
-    RunUrl,
-    Lang,
-    ChangeVer,
-    Exit,
-    Invalid,
-}
+// 从 Cargo.toml 读取 repository 信息
+fn repo_path_from_cargo() -> Result<String, String> {
+    // 读取 Cargo.toml 文件
+    let cargo_toml_path = Path::new("Cargo.toml");
+    let toml_content = fs::read_to_string(cargo_toml_path).map_err(|e| format!("读取 Cargo.toml 失败: {}", e))?;
 
-// 兼容旧实现：从 Option<u8>（首字节）转枚举
-impl From<Option<u8>> for MenuAction {
-    fn from(b: Option<u8>) -> Self {
-        match b {
-            Some(b'1') => Self::RunLocal,
-            Some(b'2') => Self::RunUrl,
-            Some(b'3') => Self::Lang,
-            Some(b'4') => Self::ChangeVer,
-            Some(b'5') => Self::Exit,
-            _ => Self::Invalid,
-        }
-    }
-}
+    // 解析 Cargo.toml
+    let toml_data: toml::Value = toml::from_str(&toml_content).map_err(|e| format!("解析 Cargo.toml 失败: {}", e))?;
 
-// 新实现：直接把整行字符串映射为枚举
-impl TryFrom<&str> for MenuAction {
-    type Error = ();
+    // 提取 repository 字段
+    let repository = toml_data
+        .get("package")
+        .and_then(|package| package.get("repository"))
+        .and_then(|repository| repository.as_str())
+        .ok_or("Cargo.toml 中缺少 'package.repository' 字段")?;
 
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        let first = s.as_bytes().first().copied();
-        Ok(MenuAction::from(first))
-    }
-}
+    // 提取 GitHub 用户名和仓库名
+    let repo_path = repository
+        .trim_start_matches("https://github.com/")
+        .trim_end_matches(".git")
+        .to_string();
 
-// ──────────────────────────────── 语言切换 ────────────────────────────────
-fn change_language(app_state: &mut AppState, stdin: &io::Stdin) {
-    print!("{}", app_state.get_language_menu_text());
-    let _ = io::stdout().flush();
-
-    let mut line = String::new();
-    if stdin.read_line(&mut line).is_err() {
-        println!("{}", app_state.get_translation("main.invalid_choice"));
-        return;
-    }
-
-    match line.trim() {
-        "1" => app_state.language = Language::English,
-        "2" => app_state.language = Language::Chinese,
-        _   => println!("{}", app_state.get_translation("main.invalid_language")),
-    }
+    Ok(repo_path)
 }
