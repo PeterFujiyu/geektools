@@ -90,3 +90,7 @@ cargo build --release
 
 Issues and PRs are warmly welcome—let’s improve Geektools together!
 
+## License
+Copyright ©️ PeterFujiyu
+[GPLv3 LICENSE](./LICENSE)
+
