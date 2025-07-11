@@ -121,6 +121,7 @@ jobs:
   provenance:
     needs: release
     permissions:
+      actions: read
       id-token: write
       contents: write
       attestations: write
