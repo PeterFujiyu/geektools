@@ -5,31 +5,44 @@ on:
     branches: [ master ]            # 自动 → Pre-release
   pull_request:
     branches: [ master ]
-  workflow_dispatch:                # 手动可升正式
+  workflow_dispatch:
     inputs:
       official:
         description: "Set true to publish **official Release**"
-        required: false
         default: "false"
 
-env: { CARGO_TERM_COLOR: always }
+#------------------------------------------------------------
+# 全局权限：发布 + OIDC + 溯源
+#------------------------------------------------------------
+permissions:
+  contents: write
+  id-token: write         # 用于 Sigstore OIDC
+  attestations: write     # 用于 Artifact Attestation
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  #================================================================
+  # 1. 编译 & 发布（产物、SBOM、哈希）
+  #================================================================
   release:
     runs-on: macos-14
-    permissions: { contents: write }
+    outputs:
+      b64subjects: ${{ steps.hash.outputs.subjects }}    # 传递给 provenance
 
     steps:
+      # -------- 检出 -------------------------------------------------
       - uses: actions/checkout@v4
 
-      # 1) 读取版本号
+      # -------- 读取版本号 -------------------------------------------
       - name: Get version
         id: ver
         run: |
           V=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
           echo "version=$V" >>"$GITHUB_OUTPUT"
 
-      # 2) 生成发布信息 & 类型
+      # -------- 准备发布元数据（预发布 / 正式） ------------------------
       - name: Prepare release meta
         id: meta
         run: |
@@ -39,16 +52,15 @@ jobs:
             IS_PRE=false
             BODY_FILE="RELEASE.md"
           fi
-          echo "pre=$IS_PRE"           >>"$GITHUB_OUTPUT"
-          echo "body=$BODY_FILE"       >>"$GITHUB_OUTPUT"
-          # 写入内容
+          echo "pre=$IS_PRE"        >>"$GITHUB_OUTPUT"
+          echo "body=$BODY_FILE"    >>"$GITHUB_OUTPUT"
           if $IS_PRE; then
             echo "⚠️  自动生成的 *预发布* 包，我没有义务为其提供技术支持" > PRE.md
           else
             echo "### 变更日志\n\n- TODO: 手动填写改动" > RELEASE.md
           fi
 
-      # 3) 若 tag 不存在则创建
+      # -------- 确保 Tag ---------------------------------------------
       - name: Ensure tag
         run: |
           TAG="v${{ steps.ver.outputs.version }}"
@@ -56,10 +68,12 @@ jobs:
           git tag -f -a "$TAG" -m "Release $TAG"
           git push -f origin "$TAG"
 
-      # 4) 安装依赖
+      # -------- 安装工具链 / 依赖 ------------------------------------
       - name: Install toolchains & musl/upx
         run: |
           brew install FiloSottile/musl-cross/musl-cross upx
+          cargo install --locked cargo-auditable         # ⬅ for embedded dep tree
+          cargo install --locked cyclonedx-rust-cargo    # ⬅ for SBOM
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -69,11 +83,27 @@ jobs:
             x86_64-unknown-linux-musl
             aarch64-unknown-linux-musl
 
-      # 5) 构建
+      # -------- 构建产物 ---------------------------------------------
       - name: Build artifacts
-        run: bash allrelease.sh
+        run: bash allrelease.sh          # 仍保持你的打包脚本
 
-      # 6) 发布
+      # -------- 生成 CycloneDX SBOM ----------------------------------
+      - name: Generate SBOM
+        run: |
+          cyclonedx-rust-cargo --output sbom.json --format json
+
+      # -------- 计算产物 SHA-256 → base64 -----------------------------
+      - name: Hash artifacts
+        id: hash
+        run: |
+          SUBJECTS=""
+          for f in target/dist/*; do
+            SHA=$(sha256sum "$f" | cut -d' ' -f1)
+            SUBJECTS+="${SHA}:$(basename "$f")\n"
+          done
+          echo -e "subjects=$(echo -e "$SUBJECTS" | base64 -w0)" >>"$GITHUB_OUTPUT"
+
+      # -------- 上传产物到 GitHub Release ----------------------------
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -81,4 +111,21 @@ jobs:
           name:       v${{ steps.ver.outputs.version }}
           prerelease: ${{ steps.meta.outputs.pre == 'true' }}
           body_path:  ${{ steps.meta.outputs.body }}
-          files:      target/dist/*
+          files: |
+            target/dist/*
+            sbom.json
+
+  #================================================================
+  # 2. SLSA L3 Provenance（官方 Generator）
+  #================================================================
+  provenance:
+    needs: release
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.release.outputs.b64subjects }}"
+      upload-assets:   true        # *.intoto.jsonl 自动附加到 Release
