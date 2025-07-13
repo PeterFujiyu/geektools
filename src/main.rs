@@ -9,11 +9,13 @@ use std::{
     io::{self, Write},
     // path::{Path, PathBuf},
     path::Path,
+    path::PathBuf,
     process::{self, Command},
     sync::{Arc, RwLock},
 };
-
+use std::process::exit;
 use once_cell::sync::Lazy;
+use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::{self, Value};
 // 读取build tag
@@ -64,6 +66,89 @@ static TRANSLATIONS: Lazy<Arc<RwLock<HashMap<Language, Value>>>> = Lazy::new(|| 
     Arc::new(RwLock::new(translations))
 });
 
+/// 配置文件路径：~/.geektools
+static CONFIG_PATH: Lazy<PathBuf> = Lazy::new(|| {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".geektools")
+});
+
+/// 存储在 ~/.geektools 中的简单 JSON 配置
+#[derive(Deserialize, serde::Serialize)]
+struct UserConfig {
+    language: String,
+}
+
+impl Default for UserConfig {
+    fn default() -> Self {
+        Self {
+            language: "English".into(),
+        }
+    }
+}
+
+/// 查询 IP-API 的返回结构
+#[derive(Deserialize)]
+struct IpApiResp {
+    #[serde(rename = "countryCode")]
+    country_code: String,
+}
+
+/// 加载或初始化用户语言
+fn load_or_init_language() -> Language {
+    // 1. 尝试读取现有配置
+    match fs::read_to_string(&*CONFIG_PATH) {
+        Ok(text) => {
+            if let Ok(cfg) = serde_json::from_str::<UserConfig>(&text) {
+                return match cfg.language.as_str() {
+                    "Chinese" => Language::Chinese,
+                    _ => Language::English,
+                };
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => { /* 文件不存在，走初始化 */ }
+        Err(e) => {
+            eprintln!("Failed to read config: {e}");
+        }
+    }
+
+    // 2. 文件不存在或解析失败 → 调用 IP API 决定默认语言
+    let default_lang = match Client::new().get("http://ip-api.com/json/").send() {
+        Ok(resp) => {
+            if let Ok(json) = resp.json::<IpApiResp>() {
+                matches!(
+                    json.country_code.as_str(),
+                    "CN" | "HK" | "MO" | "TW"
+                )
+                .then_some(Language::Chinese)
+                .unwrap_or(Language::English)
+            } else {
+                Language::English
+            }
+        }
+        Err(err) => {
+            eprintln!("IP API request failed: {err}");
+            Language::English
+        }
+    };
+
+    // 3. 保存到新配置文件
+    let _ = save_language_to_config(default_lang);
+
+    default_lang
+}
+
+/// 将语言写回 ~/.geektools
+fn save_language_to_config(lang: Language) -> io::Result<()> {
+    let cfg = UserConfig {
+        language: match lang {
+            Language::Chinese => "Chinese".into(),
+            Language::English => "English".into(),
+        },
+    };
+    let json = serde_json::to_string_pretty(&cfg).unwrap_or_else(|_| "{}".into());
+    fs::write(&*CONFIG_PATH, json)
+}
+
 // ───────────────────────────────── 应用状态 ────────────────────────────────
 struct AppState {
     language: Language,
@@ -71,9 +156,8 @@ struct AppState {
 
 impl AppState {
     fn new() -> Self {
-        AppState {
-            language: Language::English,
-        }
+        let lang = load_or_init_language();
+        AppState { language: lang }
     }
 
     // 基础翻译
@@ -113,12 +197,11 @@ impl AppState {
     // 主菜单文本
     fn get_menu_text(&self) -> String {
         format!(
-            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n5. {}\n{}",
+            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n{}",
             self.get_translation("menu.title"),
             self.get_translation("menu.run_existing_script"),
             self.get_translation("menu.run_script_from_network"),
-            self.get_translation("menu.change_language"),
-            self.get_translation("menu.change_version"),
+            self.get_translation("menu.settings"),
             self.get_translation("menu.exit"),
             self.get_translation("menu.prompt")
         )
@@ -132,6 +215,19 @@ impl AppState {
             self.get_translation("language_menu.english"),
             self.get_translation("language_menu.chinese"),
             self.get_translation("language_menu.prompt")
+        )
+    }
+
+    // 设置菜单
+    fn get_settings_menu_text(&self) -> String {
+        format!(
+            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n{}",
+            self.get_translation("settings_menu.title"),
+            self.get_translation("settings_menu.change_language"),
+            self.get_translation("settings_menu.change_version"),
+            self.get_translation("settings_menu.clear_personalization"),
+            self.get_translation("settings_menu.back"),
+            self.get_translation("settings_menu.prompt")
         )
     }
 }
@@ -582,7 +678,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
     };
 
     // 3. 写入临时文件
-    
+
     let file_name = format!("script_{}.sh", rand::random::<u64>());
     tmp_path.push(file_name);
     if let Err(e) = fs::write(&tmp_path, &content) {
@@ -723,7 +819,7 @@ fn main() {
     println!("{}", app_state.get_translation("main.welcome"));
 
     println!("{}", app_state.get_formatted_translation("main.version_msg", &[env!("CARGO_PKG_VERSION"), format!("https://github.com/{}", env!("CARGO_PKG_REPOSITORY")).as_str()]));
-    
+
     println!("{}", app_state.get_formatted_translation("main.buildtag_msg", &[BUILD_TAG, format!("https://github.com/{}/Buildtag.md", env!("CARGO_PKG_REPOSITORY")).as_str()]));
     loop {
         print!("{}", app_state.get_menu_text());
@@ -738,7 +834,33 @@ fn main() {
         match choice.trim() {
             "1" => run_existing_script(&app_state),
             "2" => run_script_from_url(&app_state),
-            "3" => {
+            "3" => show_settings_menu(&mut app_state),
+            "4" => {
+                println!("{}", app_state.get_translation("main.exit_message"));
+                process::exit(0);
+            }
+            _ => println!("{}", app_state.get_translation("main.invalid_choice")),
+        }
+
+        println!(); // 空行，美观
+    }
+}
+
+// 显示设置菜单
+fn show_settings_menu(app_state: &mut AppState) {
+    loop {
+        print!("{}", app_state.get_settings_menu_text());
+        let _ = io::stdout().flush();
+
+        let mut choice = String::new();
+        if io::stdin().read_line(&mut choice).is_err() {
+            println!("{}", app_state.get_translation("main.invalid_choice"));
+            continue;
+        }
+
+        match choice.trim() {
+            "1" => {
+                // 语言设置
                 print!("{}", app_state.get_language_menu_text());
                 let _ = io::stdout().flush();
 
@@ -748,16 +870,29 @@ fn main() {
                     continue;
                 }
                 match lang_choice.trim() {
-                    "1" => app_state.language = Language::English,
-                    "2" => app_state.language = Language::Chinese,
+                    "1" => {
+                        app_state.language = Language::English;
+                        let _ = save_language_to_config(app_state.language);
+                    },
+                    "2" => {
+                        app_state.language = Language::Chinese;
+                        let _ = save_language_to_config(app_state.language);
+                    },
                     _ => println!("{}", app_state.get_translation("main.invalid_language")),
                 }
-            }
-            "4" => change_version(&app_state),
-            "5" => {
-                println!("{}", app_state.get_translation("main.exit_message"));
-                process::exit(0);
-            }
+            },
+            "2" => change_version(app_state),
+            "3" => {
+                // 清理个性化设置
+                if let Err(e) = fs::remove_file(&*CONFIG_PATH) {
+                    if e.kind() != io::ErrorKind::NotFound {
+                        println!("Failed to clear personalization: {}", e);
+                    }
+                }
+                println!("{}", app_state.get_translation("settings_menu.clear_success"));
+                exit(0);
+            },
+            "4" => return, // 返回主菜单
             _ => println!("{}", app_state.get_translation("main.invalid_choice")),
         }
 

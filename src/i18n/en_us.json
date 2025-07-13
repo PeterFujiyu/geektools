@@ -3,10 +3,18 @@
     "title": "=== CLI Menu ===",
     "run_existing_script": "Run existing script",
     "run_script_from_network": "Run script from network link",
+    "settings": "Settings",
+    "exit": "Exit",
+    "prompt": "Please enter your choice (1-4): "
+  },
+  "settings_menu": {
+    "title": "=== Settings ===",
     "change_language": "Change language",
     "change_version": "Change version",
-    "exit": "Exit",
-    "prompt": "Please enter your choice (1-5): "
+    "clear_personalization": "Clear personalization",
+    "clear_success": "Personalization settings cleared successfully! Please reopen this program.",
+    "back": "Back to main menu",
+    "prompt": "Please enter your choice (1-4): "
   },
   "language_menu": {
     "title": "=== Language Selection ===",

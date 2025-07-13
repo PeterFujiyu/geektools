@@ -3,10 +3,18 @@
     "title": "=== CLI 菜单 ===",
     "run_existing_script": "运行现有脚本",
     "run_script_from_network": "从网络链接运行脚本",
+    "settings": "设置",
+    "exit": "退出",
+    "prompt": "请输入您的选择 (1-4): "
+  },
+  "settings_menu": {
+    "title": "=== 设置 ===",
     "change_language": "修改语言",
     "change_version": "更换版本",
-    "exit": "退出",
-    "prompt": "请输入您的选择 (1-5): "
+    "clear_personalization": "清理个性化",
+    "clear_success": "个性化设置已成功清理！请重新打开此程序",
+    "back": "返回主菜单",
+    "prompt": "请输入您的选择 (1-4): "
   },
   "language_menu": {
     "title": "=== 语言选择 ===",
