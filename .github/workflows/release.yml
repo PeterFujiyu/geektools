@@ -3,6 +3,8 @@ name: Rust Auto-Release (macOS + Linux)
 on:
   push:
     branches: [ master ]            # 自动 → Pre-release
+    paths-ignore:
+      - '**/Buildtag.md'
   pull_request:
     branches: [ master ]
   workflow_dispatch:                # 手动可升正式
@@ -11,6 +13,9 @@ on:
         description: "Set true to publish **official Release**"
         required: false
         default: "false"
+
+permissions:
+  contents: write
 
 env: { CARGO_TERM_COLOR: always }
 
@@ -73,7 +78,16 @@ jobs:
       - name: Build artifacts
         run: bash allrelease.sh
 
-      # 6) 发布
+      # 6) 推送Buildtag.md
+      - name: Update buildtag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Buildtag.md
+          git commit -m "Update buildtag from GitHub Action" || echo "No changes"
+          git push
+
+      # 7) 发布
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:

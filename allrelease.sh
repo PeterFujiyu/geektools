@@ -39,6 +39,31 @@ rustup target add \
 echo "🧹 Cleaning old dist..."
 rm -rf "$RELEASE_DIR"; mkdir -p "$RELEASE_DIR"
 
+# ───── 2.5 生成 buildtag ─────────────────────────────────────────
+generate_buildtag() {
+  local kernel_version ts raw tag
+  kernel_version=$(uname -r)               # 编译设备内核版本
+  kernel=$(uname)                          # 编译设备内核
+  ts=$(date -u +"%Y%m%d%H%M%S")            # 编译时间戳（UTC）
+  raw="${kernel_version}${ts}${kernel}"
+
+  if command -v sha256sum > /dev/null 2>&1; then
+    tag=$(printf '%s' "$raw" | sha256sum  | awk '{print substr($1,length($1)-15)}')
+  else
+    tag=$(printf '%s' "$raw" | shasum -a 256 | awk '{print substr($1,length($1)-15)}')
+  fi
+  echo "$tag"
+}
+
+# 生成并写入 ./src/buildtag.env（覆盖写入）
+kernel_version=$(uname -r)                       # 编译设备内核版本
+kernel=$(uname)                          # 编译设备内核
+ts=$(date -u +"%Y%m%d%H%M%S")            # 编译时间戳（UTC）
+BUILD_TAG=$(generate_buildtag)
+echo "📝  Build tag: $BUILD_TAG"
+echo "$BUILD_TAG" > ./src/buildtag.env
+echo "- $BUILD_TAG = ${kernel} ${kernel_version} Time:${ts}" >> ./Buildtag.md
+
 # ───── 3. 构建帮助函数 ───────────────────────────────────────────
 build() {
   local target=$1 out=$2 ext=${3:-}

@@ -59,6 +59,7 @@
   "main": {
     "welcome": "---- 这是一个极客的Rust项目！----",
     "version_msg": "=== 此构建版本为{},详情在 {} 查看 ===",
+    "buildtag_msg": "=== 此构建标签为{}, 详情在 {} ===",
     "invalid_choice": "无效的选择，请重试。",
     "invalid_language": "无效的选择，语言未更改。",
     "exit_message": "正在退出程序。再见！"

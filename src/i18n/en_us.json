@@ -59,6 +59,7 @@
   "main": {
     "welcome": "---- Hey this a rust project for geek! ----",
     "version_msg": "This build version is {}, see details on {} please.",
+    "buildtag_msg": "This build tag is {}, see details on {} please.",
     "invalid_choice": "Invalid choice, please try again.",
     "invalid_language": "Invalid choice, language not changed.",
     "exit_message": "Exiting program. Goodbye!"

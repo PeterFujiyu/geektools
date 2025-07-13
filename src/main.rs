@@ -16,6 +16,12 @@ use std::{
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde_json::{self, Value};
+// 读取build tag
+
+// 编译期嵌入的文件内容（保持原样，含换行 / 空白）
+
+const BUILD_TAG: &str = include_str!("./buildtag.env");
+
 
 // ────────────────────────────────────────────────────────────────────────────
 // 1️⃣ 统一的调试宏：只在 DEBUG 文件开启时打印
@@ -717,7 +723,8 @@ fn main() {
     println!("{}", app_state.get_translation("main.welcome"));
 
     println!("{}", app_state.get_formatted_translation("main.version_msg", &[env!("CARGO_PKG_VERSION"), format!("https://github.com/{}", env!("CARGO_PKG_REPOSITORY")).as_str()]));
-
+    
+    println!("{}", app_state.get_formatted_translation("main.buildtag_msg", &[BUILD_TAG, format!("https://github.com/{}/Buildtag.md", env!("CARGO_PKG_REPOSITORY")).as_str()]));
     loop {
         print!("{}", app_state.get_menu_text());
         let _ = io::stdout().flush();
