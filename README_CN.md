@@ -22,15 +22,14 @@
 
 ### 接着，根据你的要求，选择下载我们部署好的的包体或进行编译
 
-### 下载包体
-- 在release界面选择合适的发布
+### 快速开始
 - 运行
-```bash
-cd ~/Downloads/
-chmod +x ./{根据你下载的文件名}
-./{根据你下载的文件名}
-```
-- 使用吧
+    ```bash
+    # 安装curl
+    # sudo apt install curl 或 sudo yum install curl
+    curl "https://raw.githubusercontent.com/PeterFujiyu/geektools/refs/heads/master/install.sh" | bash
+    ```
+- 使用吧 🎉
 
 ### 手动构建(仅在macOS的rust环境中进行过测试,不保证Linux的可用性)
 #### 准备工作
@@ -71,3 +70,7 @@ cargo build --release
 5. 在 GitHub 上发起 Pull Request。
 
 欢迎提交 Issue 与 PR，一同完善项目！
+
+## 许可证
+版权所有 Copyright ©️ PeterFujiyu
+[GPLv3 LICENSE](./LICENSE)
