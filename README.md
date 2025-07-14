@@ -24,17 +24,17 @@ Please stay tuned for “The Emperor’s Future Project” (coming soon).
 
 ### Next: Pick One—Download a Pre-built Package or Build from Source
 
-### Download the Package
+### Download the Package and fast start
 
-1. Visit the **Releases** page and grab the file that matches your platform.  
-2. In your terminal:
+
+1. In your terminal:
 
    ```bash
-   cd ~/Downloads/
-   chmod +x ./<downloaded-file-name>
-   ./<downloaded-file-name>
+   # install wget
+   # sudo apt install wget | sudo yum install wget
+   wget "https://raw.githubusercontent.com/PeterFujiyu/geektools/refs/heads/master/install.sh" | bash
    ```
-3. Enjoy 🎉
+2. Enjoy 🎉
 
 ### Build Manually
 *(only tested with a Rust toolchain on macOS; Linux is unverified)*

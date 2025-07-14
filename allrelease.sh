@@ -61,6 +61,7 @@ kernel=$(uname)                          # 编译设备内核
 ts=$(date -u +"%Y%m%d%H%M%S")            # 编译时间戳（UTC）
 BUILD_TAG=$(generate_buildtag)
 echo "📝  Build tag: $BUILD_TAG"
+touch ./src/buildtag.env
 echo "$BUILD_TAG" > ./src/buildtag.env
 echo "- $BUILD_TAG = ${kernel} ${kernel_version} Time:${ts}" >> ./Buildtag.md
 
