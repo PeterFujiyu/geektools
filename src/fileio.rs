@@ -1,4 +1,4 @@
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::Path;
 
@@ -25,6 +25,16 @@ pub fn write_bytes(path: impl AsRef<Path>, data: &[u8]) -> io::Result<()> {
         }
     }
     fs::write(path, data)
+}
+
+/// Open a file in append mode, creating parent directories if needed
+pub fn open_append(path: impl AsRef<Path>) -> io::Result<File> {
+    if let Some(parent) = path.as_ref().parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    OpenOptions::new().create(true).append(true).open(path)
 }
 
 /// Recursively create a directory
