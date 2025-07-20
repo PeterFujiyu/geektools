@@ -1,11 +1,16 @@
+mod fileio;
 mod i18n;
 mod scripts;
 
+use once_cell::sync::Lazy;
+use reqwest::blocking::Client;
+use serde::Deserialize;
+use serde_json::{self, Value};
+use std::process::exit;
 use std::{
     collections::HashMap,
     env,
     // fs::{self, File},
-    fs::{self},
     io::{self, Write},
     // path::{Path, PathBuf},
     path::Path,
@@ -13,23 +18,17 @@ use std::{
     process::{self, Command},
     sync::{Arc, RwLock},
 };
-use std::process::exit;
-use once_cell::sync::Lazy;
-use reqwest::blocking::Client;
-use serde::Deserialize;
-use serde_json::{self, Value};
 // 读取build tag
 
 // 编译期嵌入的文件内容（保持原样，含换行 / 空白）
 
 const BUILD_TAG: &str = include_str!("./buildtag.env");
 
-
 // ────────────────────────────────────────────────────────────────────────────
 // 1️⃣ 统一的调试宏：只在 DEBUG 文件开启时打印
 // ────────────────────────────────────────────────────────────────────────────
 static DEBUG_ENABLED: Lazy<bool> = Lazy::new(|| {
-    fs::read_to_string("DEBUG")
+    fileio::read("DEBUG")
         .map(|s| s.trim() == "DEBUG=true")
         .unwrap_or(false)
 });
@@ -96,7 +95,7 @@ struct IpApiResp {
 /// 加载或初始化用户语言
 fn load_or_init_language() -> Language {
     // 1. 尝试读取现有配置
-    match fs::read_to_string(&*CONFIG_PATH) {
+    match fileio::read(&*CONFIG_PATH) {
         Ok(text) => {
             if let Ok(cfg) = serde_json::from_str::<UserConfig>(&text) {
                 return match cfg.language.as_str() {
@@ -115,12 +114,9 @@ fn load_or_init_language() -> Language {
     let default_lang = match Client::new().get("http://ip-api.com/json/").send() {
         Ok(resp) => {
             if let Ok(json) = resp.json::<IpApiResp>() {
-                matches!(
-                    json.country_code.as_str(),
-                    "CN" | "HK" | "MO" | "TW"
-                )
-                .then_some(Language::Chinese)
-                .unwrap_or(Language::English)
+                matches!(json.country_code.as_str(), "CN" | "HK" | "MO" | "TW")
+                    .then_some(Language::Chinese)
+                    .unwrap_or(Language::English)
             } else {
                 Language::English
             }
@@ -146,7 +142,7 @@ fn save_language_to_config(lang: Language) -> io::Result<()> {
         },
     };
     let json = serde_json::to_string_pretty(&cfg).unwrap_or_else(|_| "{}".into());
-    fs::write(&*CONFIG_PATH, json)
+    fileio::write(&*CONFIG_PATH, &json)
 }
 
 // ───────────────────────────────── 应用状态 ────────────────────────────────
@@ -251,7 +247,7 @@ struct GhRelease {
 // ────────────────────────────────────────────────────────────────────────────
 fn fetch_releases() -> Result<Vec<GhRelease>, String> {
     let repo = repo_path_from_cargo()?;
-    let url  = format!("https://api.github.com/repos/{repo}/releases");
+    let url = format!("https://api.github.com/repos/{repo}/releases");
     debug_log!("[DEBUG] 即将请求 GitHub API: {url}");
 
     let client = reqwest::blocking::Client::builder()
@@ -263,7 +259,10 @@ fn fetch_releases() -> Result<Vec<GhRelease>, String> {
         .build()
         .map_err(|e| format!("构建 client 失败: {e}"))?;
 
-    let resp = client.get(&url).send().map_err(|e| format!("请求失败: {e}"))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .map_err(|e| format!("请求失败: {e}"))?;
     debug_log!("[DEBUG] 收到响应，状态码: {}", resp.status());
 
     if !resp.status().is_success() {
@@ -295,13 +294,12 @@ fn download_and_replace(url: &str) -> Result<(), String> {
     let exe = env::current_exe().map_err(|e| e.to_string())?;
     let mut tmp = exe.clone();
     tmp.set_extension("tmp");
-    fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    fileio::write_bytes(&tmp, &bytes).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755));
+        let _ = fileio::set_executable(&tmp);
     }
-    fs::rename(&tmp, &exe).map_err(|e| e.to_string())?;
+    fileio::rename(&tmp, &exe).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -378,8 +376,10 @@ fn choose_other(app_state: &AppState) {
                 }
             }
 
-            let prompt = app_state
-                .get_formatted_translation("update_menu.select_prompt", &[&releases.len().to_string()]);
+            let prompt = app_state.get_formatted_translation(
+                "update_menu.select_prompt",
+                &[&releases.len().to_string()],
+            );
 
             loop {
                 print!("{}", prompt);
@@ -454,20 +454,20 @@ fn change_version(app_state: &AppState) {
 // ──────────────────────────────── 运行本地脚本 ─────────────────────────────
 fn run_existing_script(app_state: &AppState) {
     // 0. 清理缓存
-    use std::{env, fs};
+    use std::env;
 
     let mut tmp_path = env::temp_dir();
     tmp_path.push("geektools");
 
     // 如果缓存目录存在则递归删除
     if tmp_path.exists() {
-        if let Err(e) = fs::remove_dir_all(&tmp_path) {
+        if let Err(e) = fileio::remove_dir(&tmp_path) {
             eprintln!("⚠️  无法删除旧缓存目录 {:?}: {e}", tmp_path);
         }
     }
 
     // 重新创建空目录，忽略已存在的错误
-    let _ = fs::create_dir_all(&tmp_path);
+    let _ = fileio::create_dir(&tmp_path);
     println!("清理成功 ✅");
     // 1. 读取 info.json（已打包进二进制）
     let data = match scripts::get_string("info.json") {
@@ -588,7 +588,7 @@ fn run_existing_script(app_state: &AppState) {
 
 // 根据脚本的 shebang 选择解释器执行脚本
 fn execute_script(path: &Path) -> io::Result<process::ExitStatus> {
-    if let Ok(content) = fs::read_to_string(path) {
+    if let Ok(content) = fileio::read(path) {
         if let Some(first_line) = content.lines().next() {
             if let Some(stripped) = first_line.strip_prefix("#!") {
                 let parts: Vec<&str> = stripped.trim().split_whitespace().collect();
@@ -623,23 +623,23 @@ fn run_sh_script(path: &Path, app_state: &AppState) {
 // 处理 .link —— 下载远程脚本后执行
 fn run_link_script(path: &Path, app_state: &AppState) {
     // 0. 清理缓存
-    use std::{env, fs};
+    use std::env;
 
     let mut tmp_path = env::temp_dir();
     tmp_path.push("geektools");
 
     // 如果缓存目录存在则递归删除
     if tmp_path.exists() {
-        if let Err(e) = fs::remove_dir_all(&tmp_path) {
+        if let Err(e) = fileio::remove_dir(&tmp_path) {
             eprintln!("⚠️  无法删除旧缓存目录 {:?}: {e}", tmp_path);
         }
     }
 
     // 重新创建空目录，忽略已存在的错误
-    let _ = fs::create_dir_all(&tmp_path);
+    let _ = fileio::create_dir(&tmp_path);
 
     // 1. 读取 URL
-    let url = match fs::read_to_string(path) {
+    let url = match fileio::read(path) {
         Ok(s) => s.trim().to_string(),
         Err(e) => {
             println!(
@@ -681,7 +681,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
 
     let file_name = format!("script_{}.sh", rand::random::<u64>());
     tmp_path.push(file_name);
-    if let Err(e) = fs::write(&tmp_path, &content) {
+    if let Err(e) = fileio::write(&tmp_path, &content) {
         println!(
             "{}",
             app_state.get_formatted_translation("url_script.failed_write", &[&e.to_string()])
@@ -691,8 +691,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
     // 4. 设置可执行
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o755)) {
+        if let Err(e) = fileio::set_executable(&tmp_path) {
             println!(
                 "{}",
                 app_state
@@ -718,7 +717,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
     }
 
     // 6. 清理
-    if let Err(e) = fs::remove_file(&tmp_path) {
+    if let Err(e) = fileio::remove_file(&tmp_path) {
         println!(
             "{}",
             app_state.get_formatted_translation("url_script.failed_remove_temp", &[&e.to_string()])
@@ -760,7 +759,7 @@ fn run_script_from_url(app_state: &AppState) {
                 let mut tmp_path = env::temp_dir();
                 let file_name = format!("script_{}.sh", rand::random::<u64>());
                 tmp_path.push(file_name);
-                if let Err(e) = fs::write(&tmp_path, script_content.as_bytes()) {
+                if let Err(e) = fileio::write(&tmp_path, &script_content) {
                     println!(
                         "{}",
                         app_state.get_formatted_translation(
@@ -772,8 +771,7 @@ fn run_script_from_url(app_state: &AppState) {
                 }
                 #[cfg(unix)]
                 {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o755));
+                    let _ = fileio::set_executable(&tmp_path);
                 }
 
                 let status = execute_script(&tmp_path);
@@ -797,7 +795,7 @@ fn run_script_from_url(app_state: &AppState) {
                     ),
                 }
 
-                let _ = fs::remove_file(&tmp_path);
+                let _ = fileio::remove_file(&tmp_path);
             }
             Err(e) => println!(
                 "{}",
@@ -818,9 +816,31 @@ fn main() {
     let mut app_state = AppState::new();
     println!("{}", app_state.get_translation("main.welcome"));
 
-    println!("{}", app_state.get_formatted_translation("main.version_msg", &[env!("CARGO_PKG_VERSION"), format!("https://github.com/{}", env!("CARGO_PKG_REPOSITORY")).as_str()]));
+    println!(
+        "{}",
+        app_state.get_formatted_translation(
+            "main.version_msg",
+            &[
+                env!("CARGO_PKG_VERSION"),
+                format!("https://github.com/{}", env!("CARGO_PKG_REPOSITORY")).as_str()
+            ]
+        )
+    );
 
-    println!("{}", app_state.get_formatted_translation("main.buildtag_msg", &[BUILD_TAG, format!("https://github.com/{}/Buildtag.md", env!("CARGO_PKG_REPOSITORY")).as_str()]));
+    println!(
+        "{}",
+        app_state.get_formatted_translation(
+            "main.buildtag_msg",
+            &[
+                BUILD_TAG,
+                format!(
+                    "https://github.com/{}/Buildtag.md",
+                    env!("CARGO_PKG_REPOSITORY")
+                )
+                .as_str()
+            ]
+        )
+    );
     loop {
         print!("{}", app_state.get_menu_text());
         let _ = io::stdout().flush();
@@ -873,25 +893,28 @@ fn show_settings_menu(app_state: &mut AppState) {
                     "1" => {
                         app_state.language = Language::English;
                         let _ = save_language_to_config(app_state.language);
-                    },
+                    }
                     "2" => {
                         app_state.language = Language::Chinese;
                         let _ = save_language_to_config(app_state.language);
-                    },
+                    }
                     _ => println!("{}", app_state.get_translation("main.invalid_language")),
                 }
-            },
+            }
             "2" => change_version(app_state),
             "3" => {
                 // 清理个性化设置
-                if let Err(e) = fs::remove_file(&*CONFIG_PATH) {
+                if let Err(e) = fileio::remove_file(&*CONFIG_PATH) {
                     if e.kind() != io::ErrorKind::NotFound {
                         println!("Failed to clear personalization: {}", e);
                     }
                 }
-                println!("{}", app_state.get_translation("settings_menu.clear_success"));
+                println!(
+                    "{}",
+                    app_state.get_translation("settings_menu.clear_success")
+                );
                 exit(0);
-            },
+            }
             "4" => return, // 返回主菜单
             _ => println!("{}", app_state.get_translation("main.invalid_choice")),
         }
