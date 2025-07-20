@@ -1,11 +1,11 @@
 mod i18n;
 mod scripts;
+mod fileio;
 
 use std::{
     collections::HashMap,
     env,
     // fs::{self, File},
-    fs::{self},
     io::{self, Write},
     // path::{Path, PathBuf},
     path::Path,
@@ -29,7 +29,7 @@ const BUILD_TAG: &str = include_str!("./buildtag.env");
 // 1️⃣ 统一的调试宏：只在 DEBUG 文件开启时打印
 // ────────────────────────────────────────────────────────────────────────────
 static DEBUG_ENABLED: Lazy<bool> = Lazy::new(|| {
-    fs::read_to_string("DEBUG")
+    fileio::read_to_string("DEBUG")
         .map(|s| s.trim() == "DEBUG=true")
         .unwrap_or(false)
 });
@@ -96,7 +96,7 @@ struct IpApiResp {
 /// 加载或初始化用户语言
 fn load_or_init_language() -> Language {
     // 1. 尝试读取现有配置
-    match fs::read_to_string(&*CONFIG_PATH) {
+    match fileio::read_to_string(&*CONFIG_PATH) {
         Ok(text) => {
             if let Ok(cfg) = serde_json::from_str::<UserConfig>(&text) {
                 return match cfg.language.as_str() {
@@ -146,7 +146,7 @@ fn save_language_to_config(lang: Language) -> io::Result<()> {
         },
     };
     let json = serde_json::to_string_pretty(&cfg).unwrap_or_else(|_| "{}".into());
-    fs::write(&*CONFIG_PATH, json)
+    fileio::write(&*CONFIG_PATH, json)
 }
 
 // ───────────────────────────────── 应用状态 ────────────────────────────────
@@ -295,13 +295,12 @@ fn download_and_replace(url: &str) -> Result<(), String> {
     let exe = env::current_exe().map_err(|e| e.to_string())?;
     let mut tmp = exe.clone();
     tmp.set_extension("tmp");
-    fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    fileio::write(&tmp, &bytes).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755));
+        fileio::set_executable(&tmp).ok();
     }
-    fs::rename(&tmp, &exe).map_err(|e| e.to_string())?;
+    fileio::rename(&tmp, &exe).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -454,20 +453,20 @@ fn change_version(app_state: &AppState) {
 // ──────────────────────────────── 运行本地脚本 ─────────────────────────────
 fn run_existing_script(app_state: &AppState) {
     // 0. 清理缓存
-    use std::{env, fs};
+    use std::env;
 
     let mut tmp_path = env::temp_dir();
     tmp_path.push("geektools");
 
     // 如果缓存目录存在则递归删除
     if tmp_path.exists() {
-        if let Err(e) = fs::remove_dir_all(&tmp_path) {
+        if let Err(e) = fileio::remove_dir_all(&tmp_path) {
             eprintln!("⚠️  无法删除旧缓存目录 {:?}: {e}", tmp_path);
         }
     }
 
     // 重新创建空目录，忽略已存在的错误
-    let _ = fs::create_dir_all(&tmp_path);
+    let _ = fileio::create_dir_all(&tmp_path);
     println!("清理成功 ✅");
     // 1. 读取 info.json（已打包进二进制）
     let data = match scripts::get_string("info.json") {
@@ -588,7 +587,7 @@ fn run_existing_script(app_state: &AppState) {
 
 // 根据脚本的 shebang 选择解释器执行脚本
 fn execute_script(path: &Path) -> io::Result<process::ExitStatus> {
-    if let Ok(content) = fs::read_to_string(path) {
+    if let Ok(content) = fileio::read_to_string(path) {
         if let Some(first_line) = content.lines().next() {
             if let Some(stripped) = first_line.strip_prefix("#!") {
                 let parts: Vec<&str> = stripped.trim().split_whitespace().collect();
@@ -623,23 +622,23 @@ fn run_sh_script(path: &Path, app_state: &AppState) {
 // 处理 .link —— 下载远程脚本后执行
 fn run_link_script(path: &Path, app_state: &AppState) {
     // 0. 清理缓存
-    use std::{env, fs};
+    use std::env;
 
     let mut tmp_path = env::temp_dir();
     tmp_path.push("geektools");
 
     // 如果缓存目录存在则递归删除
     if tmp_path.exists() {
-        if let Err(e) = fs::remove_dir_all(&tmp_path) {
+        if let Err(e) = fileio::remove_dir_all(&tmp_path) {
             eprintln!("⚠️  无法删除旧缓存目录 {:?}: {e}", tmp_path);
         }
     }
 
     // 重新创建空目录，忽略已存在的错误
-    let _ = fs::create_dir_all(&tmp_path);
+    let _ = fileio::create_dir_all(&tmp_path);
 
     // 1. 读取 URL
-    let url = match fs::read_to_string(path) {
+    let url = match fileio::read_to_string(path) {
         Ok(s) => s.trim().to_string(),
         Err(e) => {
             println!(
@@ -681,7 +680,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
 
     let file_name = format!("script_{}.sh", rand::random::<u64>());
     tmp_path.push(file_name);
-    if let Err(e) = fs::write(&tmp_path, &content) {
+    if let Err(e) = fileio::write(&tmp_path, &content) {
         println!(
             "{}",
             app_state.get_formatted_translation("url_script.failed_write", &[&e.to_string()])
@@ -691,8 +690,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
     // 4. 设置可执行
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o755)) {
+        if let Err(e) = fileio::set_executable(&tmp_path) {
             println!(
                 "{}",
                 app_state
@@ -718,7 +716,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
     }
 
     // 6. 清理
-    if let Err(e) = fs::remove_file(&tmp_path) {
+    if let Err(e) = fileio::remove_file(&tmp_path) {
         println!(
             "{}",
             app_state.get_formatted_translation("url_script.failed_remove_temp", &[&e.to_string()])
@@ -760,7 +758,7 @@ fn run_script_from_url(app_state: &AppState) {
                 let mut tmp_path = env::temp_dir();
                 let file_name = format!("script_{}.sh", rand::random::<u64>());
                 tmp_path.push(file_name);
-                if let Err(e) = fs::write(&tmp_path, script_content.as_bytes()) {
+                if let Err(e) = fileio::write(&tmp_path, script_content.as_bytes()) {
                     println!(
                         "{}",
                         app_state.get_formatted_translation(
@@ -772,8 +770,7 @@ fn run_script_from_url(app_state: &AppState) {
                 }
                 #[cfg(unix)]
                 {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o755));
+                    let _ = fileio::set_executable(&tmp_path);
                 }
 
                 let status = execute_script(&tmp_path);
@@ -797,7 +794,7 @@ fn run_script_from_url(app_state: &AppState) {
                     ),
                 }
 
-                let _ = fs::remove_file(&tmp_path);
+                let _ = fileio::remove_file(&tmp_path);
             }
             Err(e) => println!(
                 "{}",
@@ -884,7 +881,7 @@ fn show_settings_menu(app_state: &mut AppState) {
             "2" => change_version(app_state),
             "3" => {
                 // 清理个性化设置
-                if let Err(e) = fs::remove_file(&*CONFIG_PATH) {
+                if let Err(e) = fileio::remove_file(&*CONFIG_PATH) {
                     if e.kind() != io::ErrorKind::NotFound {
                         println!("Failed to clear personalization: {}", e);
                     }

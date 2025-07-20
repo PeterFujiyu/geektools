@@ -1,4 +1,6 @@
-use std::{env, fs, io, path::PathBuf};
+use std::{env, io, path::PathBuf};
+
+use crate::fileio;
 
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
@@ -13,7 +15,7 @@ struct Assets;
 static TMP_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let dir = env::temp_dir().join("rustsimpin_scripts");
     // ignore error if exists
-    let _ = fs::create_dir_all(&dir);
+    let _ = fileio::create_dir_all(&dir);
     dir
 });
 
@@ -27,16 +29,13 @@ pub fn materialize(name: &str) -> io::Result<PathBuf> {
     let dest = TMP_DIR.join(name);
     if !dest.exists() {
         if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
+            fileio::create_dir_all(parent)?;
         }
-        fs::write(&dest, data.data.as_ref())?;
+        fileio::write(&dest, data.data.as_ref())?;
         // 3) chmod +x （Unix；Windows 会忽略）
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perm = dest.metadata()?.permissions();
-            perm.set_mode(0o755);
-            fs::set_permissions(&dest, perm)?;
+            fileio::set_executable(&dest)?;
         }
     }
     Ok(dest)
