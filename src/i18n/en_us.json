@@ -3,9 +3,11 @@
     "title": "=== CLI Menu ===",
     "run_existing_script": "Run existing script",
     "run_script_from_network": "Run script from network link",
+    "custom_scripts": "Custom Scripts Management",
     "settings": "Settings",
     "exit": "Exit",
-    "prompt": "Please enter your choice (1-4): "
+    "prompt": "Please enter your choice (1-4): ",
+    "prompt_extended": "Please enter your choice (1-5): "
   },
   "settings_menu": {
     "title": "=== Settings ===",
@@ -71,5 +73,28 @@
     "invalid_choice": "Invalid choice, please try again.",
     "invalid_language": "Invalid choice, language not changed.",
     "exit_message": "Exiting program. Goodbye!"
+  },
+  "security": {
+    "warning_title": "Security Warning",
+    "warning_content": "You are about to add and run external scripts from a network URL. Please note:",
+    "disclaimer": "• We do not guarantee the security of external scripts\n• Running unknown scripts may pose security risks\n• Scripts may contain malicious code or damage your system",
+    "responsibility": "• You run unknown scripts at your own risk",
+    "confirm_prompt": "Are you sure you want to continue? (y/N): "
+  },
+  "custom_script": {
+    "cancelled": "Operation cancelled.",
+    "enter_url": "Enter script URL: ",
+    "downloading": "Downloading script...",
+    "no_scripts": "No custom scripts.",
+    "list_title": "=== Custom Scripts List ===",
+    "list_for_removal": "=== Select Script to Remove ==="
+  },
+  "custom_script_menu": {
+    "title": "=== Custom Scripts Management ===",
+    "add": "Add Script",
+    "list": "List Scripts",
+    "remove": "Remove Script",
+    "back": "Back to Main Menu",
+    "prompt": "Please enter your choice (1-4): "
   }
 }

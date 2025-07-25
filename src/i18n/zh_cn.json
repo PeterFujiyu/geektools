@@ -3,9 +3,11 @@
     "title": "=== CLI 菜单 ===",
     "run_existing_script": "运行现有脚本",
     "run_script_from_network": "从网络链接运行脚本",
+    "custom_scripts": "自定义脚本管理",
     "settings": "设置",
     "exit": "退出",
-    "prompt": "请输入您的选择 (1-4): "
+    "prompt": "请输入您的选择 (1-4): ",
+    "prompt_extended": "请输入您的选择 (1-5): "
   },
   "settings_menu": {
     "title": "=== 设置 ===",
@@ -71,5 +73,28 @@
     "invalid_choice": "无效的选择，请重试。",
     "invalid_language": "无效的选择，语言未更改。",
     "exit_message": "正在退出程序。再见！"
+  },
+  "security": {
+    "warning_title": "安全警告",
+    "warning_content": "您即将从网络URL添加和运行外部脚本。请注意：",
+    "disclaimer": "• 我们不保证外部脚本的安全性\n• 运行来历不明的脚本可能存在安全风险\n• 脚本可能包含恶意代码或损坏您的系统",
+    "responsibility": "• 运行来历不明的脚本，后果自负",
+    "confirm_prompt": "您确定要继续吗？(y/N): "
+  },
+  "custom_script": {
+    "cancelled": "操作已取消。",
+    "enter_url": "请输入脚本URL: ",
+    "downloading": "正在下载脚本...",
+    "no_scripts": "没有自定义脚本。",
+    "list_title": "=== 自定义脚本列表 ===",
+    "list_for_removal": "=== 选择要删除的脚本 ==="
+  },
+  "custom_script_menu": {
+    "title": "=== 自定义脚本管理 ===",
+    "add": "添加脚本",
+    "list": "查看脚本列表",
+    "remove": "删除脚本",
+    "back": "返回主菜单",
+    "prompt": "请输入您的选择 (1-4): "
   }
 }

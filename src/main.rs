@@ -119,16 +119,28 @@ macro_rules! log_eprintln {
     }};
 }
 
-/// 存储在 ~/.geektools/config.json 中的简单 JSON 配置
+/// 自定义脚本信息
+#[derive(Deserialize, serde::Serialize, Clone)]
+struct CustomScript {
+    url: String,
+    name: String,
+    description: String,
+    added_time: String,
+}
+
+/// 存储在 ~/.geektools/config.json 中的配置
 #[derive(Deserialize, serde::Serialize)]
 struct UserConfig {
     language: String,
+    #[serde(default)]
+    custom_scripts: std::collections::HashMap<String, CustomScript>,
 }
 
 impl Default for UserConfig {
     fn default() -> Self {
         Self {
             language: "English".into(),
+            custom_scripts: std::collections::HashMap::new(),
         }
     }
 }
@@ -181,16 +193,30 @@ fn load_or_init_language() -> Language {
     default_lang
 }
 
+/// 加载完整用户配置
+fn load_user_config() -> UserConfig {
+    match fileio::read(&*CONFIG_PATH) {
+        Ok(text) => {
+            serde_json::from_str::<UserConfig>(&text).unwrap_or_default()
+        }
+        Err(_) => UserConfig::default(),
+    }
+}
+
+/// 保存完整用户配置
+fn save_user_config(config: &UserConfig) -> io::Result<()> {
+    let json = serde_json::to_string_pretty(config).unwrap_or_else(|_| "{}".into());
+    fileio::write(&*CONFIG_PATH, &json)
+}
+
 /// 将语言写回 ~/.geektools/config.json
 fn save_language_to_config(lang: Language) -> io::Result<()> {
-    let cfg = UserConfig {
-        language: match lang {
-            Language::Chinese => "Chinese".into(),
-            Language::English => "English".into(),
-        },
+    let mut config = load_user_config();
+    config.language = match lang {
+        Language::Chinese => "Chinese".into(),
+        Language::English => "English".into(),
     };
-    let json = serde_json::to_string_pretty(&cfg).unwrap_or_else(|_| "{}".into());
-    fileio::write(&*CONFIG_PATH, &json)
+    save_user_config(&config)
 }
 
 // ───────────────────────────────── 应用状态 ────────────────────────────────
@@ -241,13 +267,14 @@ impl AppState {
     // 主菜单文本
     fn get_menu_text(&self) -> String {
         format!(
-            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n{}",
+            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n5. {}\n{}",
             self.get_translation("menu.title"),
             self.get_translation("menu.run_existing_script"),
             self.get_translation("menu.run_script_from_network"),
+            self.get_translation("menu.custom_scripts"),
             self.get_translation("menu.settings"),
             self.get_translation("menu.exit"),
-            self.get_translation("menu.prompt")
+            self.get_translation("menu.prompt_extended")
         )
     }
 
@@ -272,6 +299,19 @@ impl AppState {
             self.get_translation("settings_menu.clear_personalization"),
             self.get_translation("settings_menu.back"),
             self.get_translation("settings_menu.prompt")
+        )
+    }
+
+    // 自定义脚本管理菜单
+    fn get_custom_scripts_menu_text(&self) -> String {
+        format!(
+            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n{}",
+            self.get_translation("custom_script_menu.title"),
+            self.get_translation("custom_script_menu.add"),
+            self.get_translation("custom_script_menu.list"),
+            self.get_translation("custom_script_menu.remove"),
+            self.get_translation("custom_script_menu.back"),
+            self.get_translation("custom_script_menu.prompt")
         )
     }
 }
@@ -551,11 +591,27 @@ fn run_existing_script(app_state: &AppState) {
         }
     };
 
-    // 2. 展示脚本列表
+    // 2. 加载自定义脚本
+    let config = load_user_config();
+    let custom_scripts: Vec<(&String, &CustomScript)> = config.custom_scripts.iter().collect();
+
+    // 3. 计算总脚本数量
+    let total_scripts = map.len() + custom_scripts.len();
+    if total_scripts == 0 {
+        log_println!(
+            "{}",
+            app_state.get_translation("script_execution.no_scripts")
+        );
+        return;
+    }
+
+    // 4. 展示脚本列表
     log_println!(
         "{}",
         app_state.get_translation("script_execution.available_scripts")
     );
+
+    // 内置脚本
     let names: Vec<&String> = map.keys().collect();
     for (i, name) in names.iter().enumerate() {
         let desc = map
@@ -571,9 +627,14 @@ fn run_existing_script(app_state: &AppState) {
         log_println!("{}. {} - {}", i + 1, name, desc);
     }
 
-    // 3. 处理用户选择
+    // 自定义脚本
+    for (i, (_, script)) in custom_scripts.iter().enumerate() {
+        log_println!("{}. {} - {} [自定义]", names.len() + i + 1, script.name, script.description);
+    }
+
+    // 5. 处理用户选择
     let prompt = app_state
-        .get_formatted_translation("script_execution.run_prompt", &[&names.len().to_string()]);
+        .get_formatted_translation("script_execution.run_prompt", &[&total_scripts.to_string()]);
     loop {
         log_print!("{}", prompt);
         let _ = io::stdout().flush();
@@ -591,35 +652,64 @@ fn run_existing_script(app_state: &AppState) {
             return;
         }
         if let Ok(idx) = input.parse::<usize>() {
-            if (1..=names.len()).contains(&idx) {
-                let script_name = names[idx - 1];
-                log_println!(
-                    "{}",
-                    app_state.get_formatted_translation(
-                        "script_execution.running_script",
-                        &[script_name]
-                    )
-                );
+            if (1..=total_scripts).contains(&idx) {
+                if idx <= names.len() {
+                    // 内置脚本
+                    let script_name = names[idx - 1];
+                    log_println!(
+                        "{}",
+                        app_state.get_formatted_translation(
+                            "script_execution.running_script",
+                            &[script_name]
+                        )
+                    );
 
-                // 将脚本释放到临时目录
-                let script_path = match scripts::materialize(script_name) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log_println!(
-                            "{}",
-                            app_state.get_formatted_translation(
-                                "script_execution.failed_read_info",
-                                &[&e.to_string()]
-                            )
-                        );
-                        return;
+                    if script_name.ends_with(".link") {
+                        // .link 文件仍使用原有逻辑
+                        let script_path = match scripts::materialize(script_name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                log_println!(
+                                    "{}",
+                                    app_state.get_formatted_translation(
+                                        "script_execution.failed_read_info",
+                                        &[&e.to_string()]
+                                    )
+                                );
+                                return;
+                            }
+                        };
+                        run_link_script(&script_path, app_state);
+                    } else {
+                        // .sh 文件使用新的依赖解析逻辑
+                        match scripts::materialize_with_deps(script_name) {
+                            Ok(script_paths) => {
+                                run_sh_scripts_with_deps(&script_paths, app_state);
+                            }
+                            Err(e) => {
+                                log_println!(
+                                    "{}",
+                                    app_state.get_formatted_translation(
+                                        "script_execution.failed_read_info",
+                                        &[&e.to_string()]
+                                    )
+                                );
+                                return;
+                            }
+                        }
                     }
-                };
-
-                if script_name.ends_with(".link") {
-                    run_link_script(&script_path, app_state);
                 } else {
-                    run_sh_script(&script_path, app_state);
+                    // 自定义脚本
+                    let custom_idx = idx - names.len() - 1;
+                    let (_, custom_script) = custom_scripts[custom_idx];
+                    log_println!(
+                        "{}",
+                        app_state.get_formatted_translation(
+                            "script_execution.running_script",
+                            &[&custom_script.name]
+                        )
+                    );
+                    run_custom_script_from_url(&custom_script.url, app_state);
                 }
                 return;
             }
@@ -628,7 +718,7 @@ fn run_existing_script(app_state: &AppState) {
             "{}",
             app_state.get_formatted_translation(
                 "script_execution.invalid_choice",
-                &[&names.len().to_string()]
+                &[&total_scripts.to_string()]
             )
         );
     }
@@ -665,6 +755,100 @@ fn run_sh_script(path: &Path, app_state: &AppState) {
             app_state.get_formatted_translation("url_script.failed_execute", &[&e.to_string()])
         ),
         _ => {}
+    }
+}
+
+// 运行自定义脚本
+fn run_custom_script_from_url(url: &str, _app_state: &AppState) {
+    log_println!("正在从URL下载自定义脚本: {}", url);
+    
+    match download_script_content(url) {
+        Ok(content) => {
+            let mut tmp_path = env::temp_dir();
+            let file_name = format!("custom_script_{}.sh", rand::random::<u64>());
+            tmp_path.push(file_name);
+            
+            if let Err(e) = fileio::write(&tmp_path, &content) {
+                log_println!("❌ 写入脚本失败: {}", e);
+                return;
+            }
+            
+            #[cfg(unix)]
+            {
+                let _ = fileio::set_executable(&tmp_path);
+            }
+            
+            log_println!("正在执行自定义脚本...");
+            match execute_script(&tmp_path) {
+                Ok(status) if status.success() => {
+                    log_println!("✅ 自定义脚本执行成功");
+                }
+                Ok(status) => {
+                    log_println!("❌ 自定义脚本执行失败，退出码: {}", status);
+                }
+                Err(e) => {
+                    log_println!("❌ 自定义脚本执行出错: {}", e);
+                }
+            }
+            
+            let _ = fileio::remove_file(&tmp_path);
+        }
+        Err(e) => {
+            log_println!("❌ 下载自定义脚本失败: {}", e);
+        }
+    }
+}
+
+// 按顺序执行多个 .sh 脚本（支持依赖关系）
+fn run_sh_scripts_with_deps(paths: &[PathBuf], app_state: &AppState) {
+    if paths.is_empty() {
+        log_println!("{}", app_state.get_translation("script_execution.no_scripts"));
+        return;
+    }
+    
+    for (i, path) in paths.iter().enumerate() {
+        let script_name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        
+        if paths.len() > 1 {
+            log_println!(
+                "正在执行脚本 {}/{}: {}",
+                i + 1,
+                paths.len(),
+                script_name
+            );
+        }
+        
+        match execute_script(path) {
+            Ok(status) if status.success() => {
+                if paths.len() > 1 {
+                    log_println!("✅ {} 执行成功", script_name);
+                }
+            }
+            Ok(status) => {
+                log_println!(
+                    "❌ {} 执行失败，退出码: {}",
+                    script_name,
+                    status
+                );
+                log_println!("停止执行后续脚本");
+                return;
+            }
+            Err(e) => {
+                log_println!(
+                    "❌ {} 执行出错: {}",
+                    script_name,
+                    e
+                );
+                log_println!("停止执行后续脚本");
+                return;
+            }
+        }
+    }
+    
+    if paths.len() > 1 {
+        log_println!("🎉 所有脚本执行完成");
     }
 }
 
@@ -902,8 +1086,9 @@ fn main() {
         match choice.trim() {
             "1" => run_existing_script(&app_state),
             "2" => run_script_from_url(&app_state),
-            "3" => show_settings_menu(&mut app_state),
-            "4" => {
+            "3" => show_custom_scripts_menu(&app_state),
+            "4" => show_settings_menu(&mut app_state),
+            "5" => {
                 log_println!("{}", app_state.get_translation("main.exit_message"));
                 process::exit(0);
             }
@@ -975,4 +1160,246 @@ fn show_settings_menu(app_state: &mut AppState) {
 fn repo_path_from_cargo() -> Result<String, String> {
     // 在编译时直接获取 repository 字段
     Ok(env!("CARGO_PKG_REPOSITORY").to_string())
+}
+
+// ─────────────────────────────── 自定义脚本管理 ───────────────────────────
+
+/// 显示安全警告
+fn show_security_warning(app_state: &AppState) -> bool {
+    log_println!("\n⚠️  {}", app_state.get_translation("security.warning_title"));
+    log_println!("{}", app_state.get_translation("security.warning_content"));
+    log_println!("{}", app_state.get_translation("security.disclaimer"));
+    log_println!("{}", app_state.get_translation("security.responsibility"));
+    
+    loop {
+        log_print!("\n{}", app_state.get_translation("security.confirm_prompt"));
+        let _ = io::stdout().flush();
+        
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            continue;
+        }
+        
+        match input.trim().to_lowercase().as_str() {
+            "y" | "yes" | "是" | "确认" => return true,
+            "n" | "no" | "否" | "取消" => return false,
+            _ => log_println!("{}", app_state.get_translation("main.invalid_choice")),
+        }
+    }
+}
+
+/// 从URL下载脚本内容
+fn download_script_content(url: &str) -> Result<String, String> {
+    let resp = reqwest::blocking::get(url)
+        .map_err(|e| format!("下载失败: {}", e))?;
+    
+    if !resp.status().is_success() {
+        return Err(format!("HTTP错误: {}", resp.status()));
+    }
+    
+    resp.text().map_err(|e| format!("读取内容失败: {}", e))
+}
+
+/// 解析脚本内容获取描述信息
+fn parse_script_info(content: &str, default_name: &str) -> (String, String) {
+    let mut name = default_name.to_string();
+    let mut description = "无描述".to_string();
+    
+    for line in content.lines().take(20) { // 只检查前20行
+        let line = line.trim();
+        if line.starts_with("# Name:") || line.starts_with("#Name:") {
+            name = line.split(':').nth(1).unwrap_or("").trim().to_string();
+        } else if line.starts_with("# Description:") || line.starts_with("#Description:") {
+            description = line.split(':').nth(1).unwrap_or("").trim().to_string();
+        } else if line.starts_with("# 名称:") || line.starts_with("#名称:") {
+            name = line.split(':').nth(1).unwrap_or("").trim().to_string();
+        } else if line.starts_with("# 描述:") || line.starts_with("#描述:") {
+            description = line.split(':').nth(1).unwrap_or("").trim().to_string();
+        }
+    }
+    
+    (name, description)
+}
+
+/// 添加自定义脚本
+fn add_custom_script(app_state: &AppState) {
+    if !show_security_warning(app_state) {
+        log_println!("{}", app_state.get_translation("custom_script.cancelled"));
+        return;
+    }
+    
+    log_print!("{}", app_state.get_translation("custom_script.enter_url"));
+    let _ = io::stdout().flush();
+    
+    let mut url = String::new();
+    if io::stdin().read_line(&mut url).is_err() {
+        log_println!("{}", app_state.get_translation("main.invalid_choice"));
+        return;
+    }
+    
+    let url = url.trim();
+    if url.is_empty() || url.eq_ignore_ascii_case("exit") {
+        return;
+    }
+    
+    log_println!("{}", app_state.get_translation("custom_script.downloading"));
+    
+    match download_script_content(url) {
+        Ok(content) => {
+            let script_id = format!("custom_{}", rand::random::<u64>());
+            let (name, description) = parse_script_info(&content, &script_id);
+            
+            log_println!("📝 检测到脚本信息:");
+            log_println!("   名称: {}", name);
+            log_println!("   描述: {}", description);
+            
+            log_print!("\n是否要编辑脚本信息? (y/N): ");
+            let _ = io::stdout().flush();
+            
+            let mut edit_choice = String::new();
+            let _ = io::stdin().read_line(&mut edit_choice);
+            
+            let (final_name, final_desc) = if edit_choice.trim().to_lowercase().starts_with("y") {
+                // 编辑名称
+                log_print!("输入脚本名称 (留空保持'{}'): ", name);
+                let _ = io::stdout().flush();
+                let mut new_name = String::new();
+                let _ = io::stdin().read_line(&mut new_name);
+                let new_name = new_name.trim();
+                let final_name = if new_name.is_empty() { name } else { new_name.to_string() };
+                
+                // 编辑描述
+                log_print!("输入脚本描述 (留空保持'{}'): ", description);
+                let _ = io::stdout().flush();
+                let mut new_desc = String::new();
+                let _ = io::stdin().read_line(&mut new_desc);
+                let new_desc = new_desc.trim();
+                let final_desc = if new_desc.is_empty() { description } else { new_desc.to_string() };
+                
+                (final_name, final_desc)
+            } else {
+                (name, description)
+            };
+            
+            let custom_script = CustomScript {
+                url: url.to_string(),
+                name: final_name.clone(),
+                description: final_desc.clone(),
+                added_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            };
+            
+            let mut config = load_user_config();
+            config.custom_scripts.insert(script_id.clone(), custom_script);
+            
+            match save_user_config(&config) {
+                Ok(_) => {
+                    log_println!("✅ 自定义脚本 '{}' 添加成功！", final_name);
+                    log_println!("   ID: {}", script_id);
+                }
+                Err(e) => {
+                    log_println!("❌ 保存配置失败: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            log_println!("❌ {}", e);
+        }
+    }
+}
+
+/// 列出自定义脚本
+fn list_custom_scripts(app_state: &AppState) {
+    let config = load_user_config();
+    
+    if config.custom_scripts.is_empty() {
+        log_println!("{}", app_state.get_translation("custom_script.no_scripts"));
+        return;
+    }
+    
+    log_println!("{}", app_state.get_translation("custom_script.list_title"));
+    for (id, script) in &config.custom_scripts {
+        log_println!("📜 {} ({})", script.name, id);
+        log_println!("   描述: {}", script.description);
+        log_println!("   URL: {}", script.url);
+        log_println!("   添加时间: {}", script.added_time);
+        log_println!();
+    }
+}
+
+/// 删除自定义脚本
+fn remove_custom_script(app_state: &AppState) {
+    let mut config = load_user_config();
+    
+    if config.custom_scripts.is_empty() {
+        log_println!("{}", app_state.get_translation("custom_script.no_scripts"));
+        return;
+    }
+    
+    log_println!("{}", app_state.get_translation("custom_script.list_for_removal"));
+    let scripts: Vec<(&String, &CustomScript)> = config.custom_scripts.iter().collect();
+    
+    for (i, (id, script)) in scripts.iter().enumerate() {
+        log_println!("{}. {} ({})", i + 1, script.name, id);
+    }
+    
+    log_print!("选择要删除的脚本编号 (1-{}, 或输入 exit 退出): ", scripts.len());
+    let _ = io::stdout().flush();
+    
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return;
+    }
+    
+    let input = input.trim();
+    if input.eq_ignore_ascii_case("exit") {
+        return;
+    }
+    
+    if let Ok(idx) = input.parse::<usize>() {
+        if (1..=scripts.len()).contains(&idx) {
+            let (id, script) = scripts[idx - 1];
+            let script_name = script.name.clone();  // 克隆名称避免生命周期问题
+            let script_id = id.clone();  // 克隆ID
+            
+            log_print!("确认删除脚本 '{}' 吗? (y/N): ", script_name);
+            let _ = io::stdout().flush();
+            
+            let mut confirm = String::new();
+            let _ = io::stdin().read_line(&mut confirm);
+            
+            if confirm.trim().to_lowercase().starts_with("y") {
+                config.custom_scripts.remove(&script_id);
+                match save_user_config(&config) {
+                    Ok(_) => log_println!("✅ 脚本 '{}' 已删除", script_name),
+                    Err(e) => log_println!("❌ 删除失败: {}", e),
+                }
+            }
+        } else {
+            log_println!("{}", app_state.get_translation("main.invalid_choice"));
+        }
+    }
+}
+
+// 显示自定义脚本管理菜单
+fn show_custom_scripts_menu(app_state: &AppState) {
+    loop {
+        log_print!("{}", app_state.get_custom_scripts_menu_text());
+        let _ = io::stdout().flush();
+
+        let mut choice = String::new();
+        if io::stdin().read_line(&mut choice).is_err() {
+            log_println!("{}", app_state.get_translation("main.invalid_choice"));
+            continue;
+        }
+
+        match choice.trim() {
+            "1" => add_custom_script(app_state),
+            "2" => list_custom_scripts(app_state),
+            "3" => remove_custom_script(app_state),
+            "4" => return, // 返回主菜单
+            _ => log_println!("{}", app_state.get_translation("main.invalid_choice")),
+        }
+
+        log_println!(); // 空行，美观
+    }
 }
