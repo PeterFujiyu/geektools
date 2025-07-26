@@ -1,5 +1,4 @@
 name: Rust Auto-Release (macOS + Linux)
-
 on:
   push:
     branches: [ master ]            # 自动 → Pre-release
@@ -13,27 +12,26 @@ on:
         description: "Set true to publish **official Release**"
         required: false
         default: "false"
-
 permissions:
   contents: write
-
 env: { CARGO_TERM_COLOR: always }
-
 jobs:
   release:
     runs-on: macos-14
     permissions: { contents: write }
-
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 0  # 获取完整历史，避免shallow clone问题
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
       # 1) 读取版本号
       - name: Get version
         id: ver
         run: |
           V=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
           echo "version=$V" >>"$GITHUB_OUTPUT"
-
+      
       # 2) 生成发布信息 & 类型
       - name: Prepare release meta
         id: meta
@@ -52,7 +50,7 @@ jobs:
           else
             echo "### 变更日志\n\n- TODO: 手动填写改动" > RELEASE.md
           fi
-
+      
       # 3) 若 tag 不存在则创建
       - name: Ensure tag
         run: |
@@ -60,12 +58,11 @@ jobs:
           git fetch --tags
           git tag -f -a "$TAG" -m "Release $TAG"
           git push -f origin "$TAG"
-
+      
       # 4) 安装依赖
       - name: Install toolchains & musl/upx
         run: |
           brew install FiloSottile/musl-cross/musl-cross upx
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: |
@@ -73,21 +70,42 @@ jobs:
             aarch64-apple-darwin
             x86_64-unknown-linux-musl
             aarch64-unknown-linux-musl
-
+      
       # 5) 构建
       - name: Build artifacts
         run: bash allrelease.sh
-
-      # 6) 推送Buildtag.md
+      
+      # 6) 推送Buildtag.md - 修复版本
       - name: Update buildtag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Buildtag.md
-          git pull --rebase origin master
-          git commit -m "Update buildtag from GitHub Action" || echo "No changes"
-          git push
-
+          
+          # 检查是否有Buildtag.md的更改
+          if [[ -f "Buildtag.md" ]]; then
+            # 如果有更改需要提交
+            if ! git diff --quiet Buildtag.md 2>/dev/null || ! git ls-files --error-unmatch Buildtag.md >/dev/null 2>&1; then
+              # 先拉取最新代码
+              git fetch origin master
+              git rebase origin/master || {
+                echo "Rebase failed, trying merge strategy"
+                git rebase --abort
+                git pull --no-rebase origin master
+              }
+              
+              # 添加和提交更改
+              git add Buildtag.md
+              git commit -m "Update buildtag from GitHub Action [skip ci]"
+              
+              # 推送更改
+              git push origin master
+            else
+              echo "No changes in Buildtag.md"
+            fi
+          else
+            echo "Buildtag.md not found"
+          fi
+      
       # 7) 发布
       - name: Publish release
         uses: softprops/action-gh-release@v2
