@@ -81,31 +81,27 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # 检查是否有Buildtag.md的更改
+          # 更简单直接的方法
           if [[ -f "Buildtag.md" ]]; then
-            # 如果有更改需要提交
-            if ! git diff --quiet Buildtag.md 2>/dev/null || ! git ls-files --error-unmatch Buildtag.md >/dev/null 2>&1; then
-              # 先拉取最新代码
-              git fetch origin master
-              git rebase origin/master || {
-                echo "Rebase failed, trying merge strategy"
-                git rebase --abort
-                git pull --no-rebase origin master
-              }
-              
-              # 添加和提交更改
-              git add Buildtag.md
+            # 直接提交当前更改
+            git add Buildtag.md
+            
+            # 检查是否有更改需要提交
+            if ! git diff --cached --quiet; then
               git commit -m "Update buildtag from GitHub Action [skip ci]"
               
-              # 推送更改
-              git push origin master
+              # 尝试推送，如果失败则先拉取再推送
+              if ! git push origin master; then
+                echo "Push failed, pulling and retrying..."
+                git pull --rebase origin master
+                git push origin master
+              fi
             else
-              echo "No changes in Buildtag.md"
+              echo "No changes to commit"
             fi
           else
             echo "Buildtag.md not found"
           fi
-      
       # 7) 发布
       - name: Publish release
         uses: softprops/action-gh-release@v2
