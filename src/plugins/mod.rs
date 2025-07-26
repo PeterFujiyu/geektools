@@ -156,10 +156,6 @@ impl PluginManager {
         self.installed_plugins.values().collect()
     }
 
-    /// 获取特定插件信息
-    pub fn get_plugin(&self, plugin_id: &str) -> Option<&InstalledPlugin> {
-        self.installed_plugins.get(plugin_id)
-    }
 
     /// 启用/禁用插件
     pub fn toggle_plugin(&mut self, plugin_id: &str, enabled: bool) -> Result<(), String> {
@@ -354,82 +350,3 @@ impl PluginManager {
     }
 }
 
-/// 创建示例插件包结构的辅助函数（用于测试）
-pub fn create_sample_plugin_structure(plugin_dir: &Path, plugin_id: &str) -> Result<(), String> {
-    // 创建插件目录结构
-    fileio::create_dir(plugin_dir)
-        .map_err(|e| format!("Failed to create plugin directory: {}", e))?;
-    
-    let scripts_dir = plugin_dir.join("scripts");
-    fileio::create_dir(&scripts_dir)
-        .map_err(|e| format!("Failed to create scripts directory: {}", e))?;
-
-    // 创建 info.json
-    let plugin_info = PluginInfo {
-        id: plugin_id.to_string(),
-        name: format!("Sample Plugin {}", plugin_id),
-        version: "1.0.0".to_string(),
-        description: "A sample plugin for testing".to_string(),
-        author: "Test Author".to_string(),
-        scripts: vec![
-            ScriptEntry {
-                name: "Hello Script".to_string(),
-                file: "hello.sh".to_string(),
-                description: "Says hello".to_string(),
-                executable: true,
-            },
-            ScriptEntry {
-                name: "Info Script".to_string(),
-                file: "info.sh".to_string(),
-                description: "Shows system info".to_string(),
-                executable: true,
-            },
-        ],
-        dependencies: vec![],
-        tags: vec!["sample".to_string(), "test".to_string()],
-        min_geektools_version: Some("0.5.0".to_string()),
-    };
-
-    let info_content = serde_json::to_string_pretty(&plugin_info)
-        .map_err(|e| format!("Failed to serialize plugin info: {}", e))?;
-    
-    fileio::write(&plugin_dir.join("info.json"), &info_content)
-        .map_err(|e| format!("Failed to write info.json: {}", e))?;
-
-    // 创建示例脚本
-    let hello_script = r#"#!/bin/bash
-# Name: Hello Script
-# Description: Says hello
-
-echo "Hello from sample plugin!"
-echo "Plugin ID: {plugin_id}"
-echo "Timestamp: $(date)"
-"#.replace("{plugin_id}", plugin_id);
-
-    let info_script = r#"#!/bin/bash
-# Name: Info Script  
-# Description: Shows system info
-
-echo "=== System Information ==="
-echo "OS: $(uname -s)"
-echo "Kernel: $(uname -r)"
-echo "Architecture: $(uname -m)"
-echo "User: $(whoami)"
-echo "Current directory: $(pwd)"
-"#;
-
-    fileio::write(&scripts_dir.join("hello.sh"), &hello_script)
-        .map_err(|e| format!("Failed to write hello.sh: {}", e))?;
-        
-    fileio::write(&scripts_dir.join("info.sh"), &info_script)
-        .map_err(|e| format!("Failed to write info.sh: {}", e))?;
-
-    // 设置可执行权限
-    #[cfg(unix)]
-    {
-        let _ = fileio::set_executable(&scripts_dir.join("hello.sh"));
-        let _ = fileio::set_executable(&scripts_dir.join("info.sh"));
-    }
-
-    Ok(())
-}

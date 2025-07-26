@@ -3,6 +3,8 @@ mod i18n;
 mod scripts;
 mod plugins;
 
+use plugins::PluginManager;
+
 use chrono::Local;
 use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
@@ -26,7 +28,7 @@ use std::{
 const BUILD_TAG: &str = include_str!("./buildtag.env");
 
 // ────────────────────────────────────────────────────────────────────────────
-// 1️⃣ 统一的调试宏：只在 DEBUG 文件开启时打印
+// 1️⃣ 统一的调试宏：只在 DEBUG 文ce开启时打印
 // ────────────────────────────────────────────────────────────────────────────
 static DEBUG_ENABLED: Lazy<bool> = Lazy::new(|| {
     fileio::read("DEBUG")
@@ -276,11 +278,12 @@ impl AppState {
     // 主菜单文本
     fn get_menu_text(&self) -> String {
         format!(
-            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n5. {}\n{}",
+            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n5. {}\n6. {}\n{}",
             self.get_translation("menu.title"),
             self.get_translation("menu.run_existing_script"),
             self.get_translation("menu.run_script_from_network"),
             self.get_translation("menu.custom_scripts"),
+            self.get_translation("menu.plugin_management"),
             self.get_translation("menu.settings"),
             self.get_translation("menu.exit"),
             self.get_translation("menu.prompt_extended")
@@ -308,6 +311,20 @@ impl AppState {
             self.get_translation("settings_menu.clear_personalization"),
             self.get_translation("settings_menu.back"),
             self.get_translation("settings_menu.prompt")
+        )
+    }
+
+    // 插件管理菜单
+    fn get_plugin_menu_text(&self) -> String {
+        format!(
+            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n5. {}\n{}",
+            self.get_translation("plugin_menu.title"),
+            self.get_translation("plugin_menu.install"),
+            self.get_translation("plugin_menu.list"),
+            self.get_translation("plugin_menu.uninstall"),
+            self.get_translation("plugin_menu.toggle"),
+            self.get_translation("plugin_menu.back"),
+            self.get_translation("plugin_menu.prompt")
         )
     }
 
@@ -604,8 +621,12 @@ fn run_existing_script(app_state: &AppState) {
     let config = load_user_config();
     let custom_scripts: Vec<(&String, &CustomScript)> = config.custom_scripts.iter().collect();
 
+    // 2.5. 加载插件脚本
+    let plugin_manager = PluginManager::new();
+    let plugin_scripts = plugin_manager.get_enabled_scripts();
+
     // 3. 计算总脚本数量
-    let total_scripts = map.len() + custom_scripts.len();
+    let total_scripts = map.len() + custom_scripts.len() + plugin_scripts.len();
     if total_scripts == 0 {
         log_println!(
             "{}",
@@ -639,6 +660,11 @@ fn run_existing_script(app_state: &AppState) {
     // 自定义脚本
     for (i, (_, script)) in custom_scripts.iter().enumerate() {
         log_println!("{}. {} - {} [自定义]", names.len() + i + 1, script.name, script.description);
+    }
+
+    // 插件脚本
+    for (i, (name, description, _)) in plugin_scripts.iter().enumerate() {
+        log_println!("{}. {} - {} [插件]", names.len() + custom_scripts.len() + i + 1, name, description);
     }
 
     // 5. 处理用户选择
@@ -707,7 +733,7 @@ fn run_existing_script(app_state: &AppState) {
                             }
                         }
                     }
-                } else {
+                } else if idx <= names.len() + custom_scripts.len() {
                     // 自定义脚本
                     let custom_idx = idx - names.len() - 1;
                     let (_, custom_script) = custom_scripts[custom_idx];
@@ -725,6 +751,19 @@ fn run_existing_script(app_state: &AppState) {
                             run_custom_script_from_url(&custom_script.url, app_state);
                         }
                     }
+                } else {
+                    // 插件脚本
+                    let plugin_idx = idx - names.len() - custom_scripts.len() - 1;
+                    let (name, _, script_path) = &plugin_scripts[plugin_idx];
+                    log_println!(
+                        "{}",
+                        app_state.get_formatted_translation(
+                            "script_execution.running_script",
+                            &[name]
+                        )
+                    );
+                    log_println!("正在执行插件脚本: {}", script_path.file_name().unwrap_or_default().to_string_lossy());
+                    run_sh_script(script_path, app_state);
                 }
                 return;
             }
@@ -1126,8 +1165,9 @@ fn main() {
             "1" => run_existing_script(&app_state),
             "2" => run_script_from_url(&app_state),
             "3" => show_custom_scripts_menu(&app_state),
-            "4" => show_settings_menu(&mut app_state),
-            "5" => {
+            "4" => show_plugin_menu(&app_state),
+            "5" => show_settings_menu(&mut app_state),
+            "6" => {
                 log_println!("{}", app_state.get_translation("main.exit_message"));
                 process::exit(0);
             }
@@ -1474,6 +1514,170 @@ fn show_custom_scripts_menu(app_state: &AppState) {
             "2" => list_custom_scripts(app_state),
             "3" => remove_custom_script(app_state),
             "4" => return, // 返回主菜单
+            _ => log_println!("{}", app_state.get_translation("main.invalid_choice")),
+        }
+
+        log_println!(); // 空行，美观
+    }
+}
+
+// 显示插件管理菜单
+fn show_plugin_menu(app_state: &AppState) {
+    let mut plugin_manager = PluginManager::new();
+    
+    loop {
+        log_print!("{}", app_state.get_plugin_menu_text());
+        let _ = io::stdout().flush();
+
+        let mut choice = String::new();
+        if io::stdin().read_line(&mut choice).is_err() {
+            log_println!("{}", app_state.get_translation("main.invalid_choice"));
+            continue;
+        }
+
+        match choice.trim() {
+            "1" => {
+                // 安装插件
+                log_print!("请输入插件包路径 (.tar.gz 文件): ");
+                let _ = io::stdout().flush();
+                
+                let mut path_input = String::new();
+                if io::stdin().read_line(&mut path_input).is_err() {
+                    log_println!("{}", app_state.get_translation("main.invalid_choice"));
+                    continue;
+                }
+                
+                let plugin_path = path_input.trim();
+                if plugin_path.is_empty() || plugin_path.eq_ignore_ascii_case("exit") {
+                    continue;
+                }
+                
+                match plugin_manager.install_plugin(Path::new(plugin_path)) {
+                    Ok(plugin_id) => {
+                        log_println!("✅ 插件安装成功！插件 ID: {}", plugin_id);
+                    }
+                    Err(e) => {
+                        log_println!("❌ 插件安装失败: {}", e);
+                    }
+                }
+            }
+            "2" => {
+                // 列出插件
+                let plugins = plugin_manager.list_installed_plugins();
+                if plugins.is_empty() {
+                    log_println!("📋 暂无已安装的插件");
+                } else {
+                    log_println!("📋 已安装的插件:");
+                    for plugin in plugins {
+                        let status = if plugin.enabled { "✅ 已启用" } else { "❌ 已禁用" };
+                        log_println!("  📦 {} ({})", plugin.info.name, plugin.info.id);
+                        log_println!("     版本: {} | 状态: {}", plugin.info.version, status);
+                        log_println!("     描述: {}", plugin.info.description);
+                        log_println!("     作者: {} | 安装时间: {}", plugin.info.author, plugin.installed_at);
+                        if !plugin.info.scripts.is_empty() {
+                            log_println!("     脚本 ({} 个):", plugin.info.scripts.len());
+                            for script in &plugin.info.scripts {
+                                log_println!("       - {} ({})", script.name, script.file);
+                            }
+                        }
+                        log_println!();
+                    }
+                }
+            }
+            "3" => {
+                // 卸载插件
+                let plugins = plugin_manager.list_installed_plugins();
+                if plugins.is_empty() {
+                    log_println!("📋 暂无已安装的插件");
+                    continue;
+                }
+                
+                log_println!("📋 选择要卸载的插件:");
+                for (i, plugin) in plugins.iter().enumerate() {
+                    log_println!("{}. {} ({})", i + 1, plugin.info.name, plugin.info.id);
+                }
+                
+                log_print!("输入插件编号 (1-{}, 或输入 exit 退出): ", plugins.len());
+                let _ = io::stdout().flush();
+                
+                let mut input = String::new();
+                if io::stdin().read_line(&mut input).is_err() {
+                    continue;
+                }
+                
+                let input = input.trim();
+                if input.eq_ignore_ascii_case("exit") {
+                    continue;
+                }
+                
+                if let Ok(idx) = input.parse::<usize>() {
+                    if (1..=plugins.len()).contains(&idx) {
+                        let plugin = &plugins[idx - 1];
+                        let plugin_name = plugin.info.name.clone();
+                        let plugin_id = plugin.info.id.clone();
+                        
+                        log_print!("确认卸载插件 '{}' 吗? (y/N): ", plugin_name);
+                        let _ = io::stdout().flush();
+                        
+                        let mut confirm = String::new();
+                        let _ = io::stdin().read_line(&mut confirm);
+                        
+                        if confirm.trim().to_lowercase().starts_with("y") {
+                            match plugin_manager.uninstall_plugin(&plugin_id) {
+                                Ok(_) => log_println!("✅ 插件 '{}' 卸载成功", plugin_name),
+                                Err(e) => log_println!("❌ 卸载失败: {}", e),
+                            }
+                        }
+                    } else {
+                        log_println!("{}", app_state.get_translation("main.invalid_choice"));
+                    }
+                }
+            }
+            "4" => {
+                // 启用/禁用插件
+                let plugins = plugin_manager.list_installed_plugins();
+                if plugins.is_empty() {
+                    log_println!("📋 暂无已安装的插件");
+                    continue;
+                }
+                
+                log_println!("📋 选择要切换状态的插件:");
+                for (i, plugin) in plugins.iter().enumerate() {
+                    let status = if plugin.enabled { "✅ 已启用" } else { "❌ 已禁用" };
+                    log_println!("{}. {} ({}) - {}", i + 1, plugin.info.name, plugin.info.id, status);
+                }
+                
+                log_print!("输入插件编号 (1-{}, 或输入 exit 退出): ", plugins.len());
+                let _ = io::stdout().flush();
+                
+                let mut input = String::new();
+                if io::stdin().read_line(&mut input).is_err() {
+                    continue;
+                }
+                
+                let input = input.trim();
+                if input.eq_ignore_ascii_case("exit") {
+                    continue;
+                }
+                
+                if let Ok(idx) = input.parse::<usize>() {
+                    if (1..=plugins.len()).contains(&idx) {
+                        let plugin = &plugins[idx - 1];
+                        let plugin_id = plugin.info.id.clone();
+                        let plugin_name = plugin.info.name.clone();
+                        let new_status = !plugin.enabled;
+                        let status_text = if new_status { "启用" } else { "禁用" };
+                        
+                        match plugin_manager.toggle_plugin(&plugin_id, new_status) {
+                            Ok(_) => log_println!("✅ 插件 '{}' 已{}", plugin_name, status_text),
+                            Err(e) => log_println!("❌ 操作失败: {}", e),
+                        }
+                    } else {
+                        log_println!("{}", app_state.get_translation("main.invalid_choice"));
+                    }
+                }
+            }
+            "5" => return, // 返回主菜单
             _ => log_println!("{}", app_state.get_translation("main.invalid_choice")),
         }
 

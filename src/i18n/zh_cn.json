@@ -4,10 +4,11 @@
     "run_existing_script": "运行现有脚本",
     "run_script_from_network": "从网络链接运行脚本",
     "custom_scripts": "自定义脚本管理",
+    "plugin_management": "插件管理",
     "settings": "设置",
     "exit": "退出",
     "prompt": "请输入您的选择 (1-4): ",
-    "prompt_extended": "请输入您的选择 (1-5): "
+    "prompt_extended": "请输入您的选择 (1-6): "
   },
   "settings_menu": {
     "title": "=== 设置 ===",
@@ -96,5 +97,14 @@
     "remove": "删除脚本",
     "back": "返回主菜单",
     "prompt": "请输入您的选择 (1-4): "
+  },
+  "plugin_menu": {
+    "title": "=== 插件管理 ===",
+    "install": "安装插件",
+    "list": "查看插件列表",
+    "uninstall": "卸载插件",
+    "toggle": "启用/禁用插件",
+    "back": "返回主菜单",
+    "prompt": "请输入您的选择 (1-5): "
   }
 }

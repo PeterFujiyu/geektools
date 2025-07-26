@@ -4,10 +4,11 @@
     "run_existing_script": "Run existing script",
     "run_script_from_network": "Run script from network link",
     "custom_scripts": "Custom Scripts Management",
+    "plugin_management": "Plugin Management",
     "settings": "Settings",
     "exit": "Exit",
     "prompt": "Please enter your choice (1-4): ",
-    "prompt_extended": "Please enter your choice (1-5): "
+    "prompt_extended": "Please enter your choice (1-6): "
   },
   "settings_menu": {
     "title": "=== Settings ===",
@@ -96,5 +97,14 @@
     "remove": "Remove Script",
     "back": "Back to Main Menu",
     "prompt": "Please enter your choice (1-4): "
+  },
+  "plugin_menu": {
+    "title": "=== Plugin Management ===",
+    "install": "Install Plugin",
+    "list": "List Plugins",
+    "uninstall": "Uninstall Plugin",
+    "toggle": "Enable/Disable Plugin",
+    "back": "Back to Main Menu",
+    "prompt": "Please enter your choice (1-5): "
   }
 }
