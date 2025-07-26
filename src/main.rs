@@ -70,6 +70,12 @@ static CONFIG_PATH: Lazy<PathBuf> = Lazy::new(|| {
     PathBuf::from(home).join(".geektools").join("config.json")
 });
 
+/// 自定义脚本存储目录：~/.geektools/custom_scripts/
+static CUSTOM_SCRIPTS_DIR: Lazy<PathBuf> = Lazy::new(|| {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".geektools").join("custom_scripts")
+});
+
 /// 日志文件路径：~/.geektools/logs/YYYYMMDDHHMM.logs
 static LOG_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -126,6 +132,8 @@ struct CustomScript {
     name: String,
     description: String,
     added_time: String,
+    #[serde(default)]
+    file_path: Option<String>,
 }
 
 /// 存储在 ~/.geektools/config.json 中的配置
@@ -709,7 +717,13 @@ fn run_existing_script(app_state: &AppState) {
                             &[&custom_script.name]
                         )
                     );
-                    run_custom_script_from_url(&custom_script.url, app_state);
+                    match &custom_script.file_path {
+                        Some(file_path) => run_custom_script_from_file(file_path, app_state),
+                        None => {
+                            log_println!("⚠️  脚本没有保存的文件路径，正在从URL重新下载...");
+                            run_custom_script_from_url(&custom_script.url, app_state);
+                        }
+                    }
                 }
                 return;
             }
@@ -758,7 +772,31 @@ fn run_sh_script(path: &Path, app_state: &AppState) {
     }
 }
 
-// 运行自定义脚本
+// 运行自定义脚本（从文件）
+fn run_custom_script_from_file(file_path: &str, app_state: &AppState) {
+    let script_path = Path::new(file_path);
+    
+    if !script_path.exists() {
+        log_println!("❌ 脚本文件不存在: {}", file_path);
+        log_println!("   提示：请尝试重新添加此脚本");
+        return;
+    }
+    
+    log_println!("正在执行自定义脚本: {}", script_path.file_name().unwrap_or_default().to_string_lossy());
+    match execute_script(script_path) {
+        Ok(status) if status.success() => {
+            log_println!("{}", app_state.get_translation("url_script.success"));
+        }
+        Ok(status) => {
+            log_println!("❌ 自定义脚本执行失败，退出码: {}", status);
+        }
+        Err(e) => {
+            log_println!("❌ 自定义脚本执行出错: {}", e);
+        }
+    }
+}
+
+// 运行自定义脚本（从URL下载，向后兼容）
 fn run_custom_script_from_url(url: &str, _app_state: &AppState) {
     log_println!("正在从URL下载自定义脚本: {}", url);
     
@@ -1281,11 +1319,37 @@ fn add_custom_script(app_state: &AppState) {
                 (name, description)
             };
             
+            // 创建自定义脚本目录
+            if !CUSTOM_SCRIPTS_DIR.exists() {
+                if let Err(e) = fileio::create_dir(&*CUSTOM_SCRIPTS_DIR) {
+                    log_println!("❌ 创建脚本目录失败: {}", e);
+                    return;
+                }
+            }
+            
+            // 保存脚本内容到文件
+            let script_file_name = format!("{}.sh", script_id);
+            let script_file_path = CUSTOM_SCRIPTS_DIR.join(&script_file_name);
+            
+            if let Err(e) = fileio::write(&script_file_path, &content) {
+                log_println!("❌ 保存脚本文件失败: {}", e);
+                return;
+            }
+            
+            // 设置可执行权限
+            #[cfg(unix)]
+            {
+                if let Err(e) = fileio::set_executable(&script_file_path) {
+                    log_println!("⚠️  设置脚本可执行权限失败: {}", e);
+                }
+            }
+            
             let custom_script = CustomScript {
                 url: url.to_string(),
                 name: final_name.clone(),
                 description: final_desc.clone(),
                 added_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                file_path: Some(script_file_path.to_string_lossy().to_string()),
             };
             
             let mut config = load_user_config();
@@ -1368,6 +1432,18 @@ fn remove_custom_script(app_state: &AppState) {
             let _ = io::stdin().read_line(&mut confirm);
             
             if confirm.trim().to_lowercase().starts_with("y") {
+                // 删除脚本文件（如果存在）
+                if let Some(file_path) = &script.file_path {
+                    let script_path = Path::new(file_path);
+                    if script_path.exists() {
+                        if let Err(e) = fileio::remove_file(script_path) {
+                            log_println!("⚠️  删除脚本文件失败: {}", e);
+                        } else {
+                            log_println!("✅ 已删除脚本文件: {}", file_path);
+                        }
+                    }
+                }
+                
                 config.custom_scripts.remove(&script_id);
                 match save_user_config(&config) {
                     Ok(_) => log_println!("✅ 脚本 '{}' 已删除", script_name),

@@ -3,6 +3,15 @@ use std::{collections::{HashMap, HashSet}, env, io, path::PathBuf};
 
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
+use serde::{Deserialize, Serialize};
+
+/// 脚本信息结构
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ScriptInfo {
+    pub name: String,
+    pub description: String,
+    pub link: Option<String>,
+}
 
 /// 嵌入 scripts 目录下的全部文件
 #[derive(RustEmbed)]
@@ -10,32 +19,82 @@ use rust_embed::RustEmbed;
 // 若将来想排除临时文件，可加 exclude = ["*.tmp"]
 struct Assets;
 
-/// 临时目录 (每次程序启动只创建一次)
-static TMP_DIR: Lazy<PathBuf> = Lazy::new(|| {
-    let dir = env::temp_dir().join("rustsimpin_scripts");
+/// 脚本存储目录 ~/.geektools/scripts/
+static SCRIPTS_DIR: Lazy<PathBuf> = Lazy::new(|| {
+    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let dir = PathBuf::from(home).join(".geektools").join("scripts");
     // ignore error if exists
     let _ = fileio::create_dir(&dir);
     dir
 });
 
-/// 把指定脚本写到临时目录并返回可执行路径
+/// 创建脚本信息并保存到 info.json
+fn create_script_info(name: &str) -> io::Result<ScriptInfo> {
+    // 从现有的 info.json 读取描述信息
+    let info_content = get_string("info.json").unwrap_or_default();
+    let existing_info: serde_json::Value = serde_json::from_str(&info_content)
+        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    
+    let script_info = if let Some(info) = existing_info.get(name) {
+        let english_desc = info.get("English").and_then(|v| v.as_str()).unwrap_or(name);
+        let chinese_desc = info.get("Chinese").and_then(|v| v.as_str()).unwrap_or(name);
+        let description = format!("{} / {}", english_desc, chinese_desc);
+        
+        // 如果是 .link 文件，设置链接
+        let link = if name.ends_with(".link") {
+            Some("https://example.com".to_string()) // 可以根据需要设置实际链接
+        } else {
+            None
+        };
+        
+        ScriptInfo {
+            name: name.to_string(),
+            description,
+            link,
+        }
+    } else {
+        ScriptInfo {
+            name: name.to_string(),
+            description: name.to_string(),
+            link: None,
+        }
+    };
+    
+    Ok(script_info)
+}
+
+/// 把指定脚本写到 ~/.geektools/scripts/(脚本名)/ 目录并返回可执行路径
 pub fn materialize(name: &str) -> io::Result<PathBuf> {
     // 1) 从 embed 中取二进制内容
     let data = Assets::get(name).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, name))?;
 
-    // 2) 写入 <tmp>/name
-    let dest = TMP_DIR.join(name);
+    // 2) 创建脚本专用目录 ~/.geektools/scripts/(脚本名)/
+    let script_name = name.split('.').next().unwrap_or(name);
+    let script_dir = SCRIPTS_DIR.join(script_name);
+    fileio::create_dir(&script_dir)?;
+    
+    // 3) 写入脚本文件
+    let dest = script_dir.join(name);
     if !dest.exists() {
-        if let Some(parent) = dest.parent() {
-            fileio::create_dir(parent)?;
-        }
         fileio::write_bytes(&dest, data.data.as_ref())?;
-        // 3) chmod +x （Unix；Windows 会忽略）
+        // 4) chmod +x （Unix；Windows 会忽略）
         #[cfg(unix)]
         {
-            fileio::set_executable(&dest)?;
+            if name.ends_with(".sh") {
+                fileio::set_executable(&dest)?;
+            }
         }
     }
+    
+    // 5) 创建或更新 info.json
+    let info_file = script_dir.join("info.json");
+    if !info_file.exists() {
+        let script_info = create_script_info(name)?;
+        let json_content = serde_json::to_string_pretty(&script_info)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        fileio::write(&info_file, &json_content)?;
+    }
+    
     Ok(dest)
 }
 pub fn get_string(name: &str) -> Option<String> {
@@ -171,7 +230,7 @@ fn resolve_dependencies(script_name: &str) -> Result<Vec<String>, String> {
     topological_sort(&deps)
 }
 
-/// 把脚本及其依赖按顺序写到临时目录并返回执行顺序
+/// 把脚本及其依赖按顺序写到 ~/.geektools/scripts/ 目录并返回执行顺序
 pub fn materialize_with_deps(name: &str) -> io::Result<Vec<PathBuf>> {
     let execution_order = resolve_dependencies(name)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -179,9 +238,10 @@ pub fn materialize_with_deps(name: &str) -> io::Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     
     for script_name in execution_order {
-        // 只包含 .sh 脚本，跳过 .link 和其他文件
+        // 所有脚本都要物化，包括 .link 文件用于信息存储
+        let path = materialize(&script_name)?;
+        // 但只有 .sh 脚本才加入执行路径
         if script_name.ends_with(".sh") {
-            let path = materialize(&script_name)?;
             paths.push(path);
         }
     }
