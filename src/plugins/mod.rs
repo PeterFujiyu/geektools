@@ -6,7 +6,6 @@ use std::{
     collections::HashMap,
     env,
     fs::File,
-    io,
     path::{Path, PathBuf},
 };
 use tar::Archive;
@@ -295,9 +294,9 @@ impl PluginManager {
                 if src_path.is_dir() {
                     self.copy_directory_recursive(&src_path, &dest_path)?;
                 } else {
-                    let content = fileio::read_bytes(&src_path)
+                    let content = fileio::read(&src_path)
                         .map_err(|e| format!("Failed to read file {:?}: {}", src_path, e))?;
-                    fileio::write_bytes(&dest_path, &content)
+                    fileio::write_bytes(&dest_path, (&content).as_ref())
                         .map_err(|e| format!("Failed to write file {:?}: {}", dest_path, e))?;
                 }
             }

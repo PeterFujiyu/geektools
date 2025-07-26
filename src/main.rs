@@ -1,6 +1,7 @@
 mod fileio;
 mod i18n;
 mod scripts;
+mod plugins;
 
 use chrono::Local;
 use once_cell::sync::Lazy;

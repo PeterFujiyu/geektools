@@ -609,7 +609,7 @@ shellcheck script.sh
 {
   "id": "advanced_tools",
   "dependencies": ["system_monitor", "network_tools"],
-  "scripts": [...]
+  "scripts": ["..."]
 }
 ```
 
