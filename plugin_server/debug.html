@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Auth Token</title>
+</head>
+<body>
+    <h1>Debug - Auth Token Check</h1>
+    <div id="result"></div>
+    <script>
+        const token = localStorage.getItem('auth_token');
+        const user = JSON.parse(localStorage.getItem('current_user') || 'null');
+        
+        document.getElementById('result').innerHTML = `
+            <h3>Token:</h3>
+            <pre>${token || 'No token found'}</pre>
+            <h3>Current User:</h3>
+            <pre>${JSON.stringify(user, null, 2) || 'No user found'}</pre>
+            <h3>Test Admin API:</h3>
+            <button onclick="testAdminAPI()">Test Admin Plugins API</button>
+            <div id="apiResult"></div>
+        `;
+        
+        window.testAdminAPI = async function() {
+            const resultDiv = document.getElementById('apiResult');
+            try {
+                const response = await fetch('http://localhost:3000/api/v1/admin/plugins', {
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json',
+                    }
+                });
+                const data = await response.json();
+                resultDiv.innerHTML = '<h4>API Response:</h4><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+            } catch (error) {
+                resultDiv.innerHTML = '<h4>Error:</h4><pre>' + error.message + '</pre>';
+            }
+        };
+    </script>
+</body>
+</html>

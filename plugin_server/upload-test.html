@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Upload Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .result { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+        .success { background: #d4edda; }
+        .error { background: #f8d7da; }
+        input, button { margin: 5px; padding: 8px; }
+    </style>
+</head>
+<body>
+    <h1>Upload Test</h1>
+    
+    <div>
+        <h3>1. First Login to Get Token</h3>
+        <input type="email" id="email" placeholder="Email" value="admin@example.com">
+        <button onclick="sendCode()">Send Code</button>
+        <br>
+        <input type="text" id="code" placeholder="Verification Code">
+        <button onclick="login()">Login</button>
+        <div id="authResult"></div>
+    </div>
+    
+    <div>
+        <h3>2. Then Test Upload</h3>
+        <input type="file" id="fileInput" accept=".tar.gz,.tgz">
+        <button onclick="testUpload()">Test Upload</button>
+        <div id="uploadResult"></div>
+    </div>
+
+    <script>
+        let authToken = '';
+        
+        async function sendCode() {
+            const email = document.getElementById('email').value;
+            const authResult = document.getElementById('authResult');
+            
+            try {
+                const response = await fetch('/api/v1/auth/send-code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                
+                const data = await response.json();
+                authResult.innerHTML = `<div class="result ${response.ok ? 'success' : 'error'}">
+                    Status: ${response.status}<br>
+                    Response: ${JSON.stringify(data, null, 2)}
+                </div>`;
+                
+                if (data.data && data.data.verification_code) {
+                    document.getElementById('code').value = data.data.verification_code;
+                }
+            } catch (error) {
+                authResult.innerHTML = `<div class="result error">Error: ${error.message}</div>`;
+            }
+        }
+        
+        async function login() {
+            const email = document.getElementById('email').value;
+            const code = document.getElementById('code').value;
+            const authResult = document.getElementById('authResult');
+            
+            try {
+                const response = await fetch('/api/v1/auth/verify-code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, verification_code: code })
+                });
+                
+                const data = await response.json();
+                authResult.innerHTML = `<div class="result ${response.ok ? 'success' : 'error'}">
+                    Status: ${response.status}<br>
+                    Response: ${JSON.stringify(data, null, 2)}
+                </div>`;
+                
+                if (data.data && data.data.token) {
+                    authToken = data.data.token;
+                    authResult.innerHTML += `<div class="result success">Token saved: ${authToken.substring(0, 20)}...</div>`;
+                }
+            } catch (error) {
+                authResult.innerHTML = `<div class="result error">Error: ${error.message}</div>`;
+            }
+        }
+        
+        async function testUpload() {
+            const fileInput = document.getElementById('fileInput');
+            const uploadResult = document.getElementById('uploadResult');
+            const file = fileInput.files[0];
+            
+            if (!authToken) {
+                uploadResult.innerHTML = '<div class="result error">Please login first to get auth token</div>';
+                return;
+            }
+            
+            if (!file) {
+                uploadResult.innerHTML = '<div class="result error">Please select a file</div>';
+                return;
+            }
+            
+            try {
+                const formData = new FormData();
+                formData.append('plugin_file', file);
+                
+                const response = await fetch('/api/v1/plugins/upload', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: formData
+                });
+                
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+                
+                const contentType = response.headers.get('content-type');
+                let data;
+                
+                if (contentType && contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    const text = await response.text();
+                    data = { error: 'Non-JSON response', content: text.substring(0, 500) };
+                }
+                
+                uploadResult.innerHTML = `<div class="result ${response.ok ? 'success' : 'error'}">
+                    <strong>Upload Test Result:</strong><br>
+                    Status: ${response.status}<br>
+                    Content-Type: ${contentType}<br>
+                    Response: <pre>${JSON.stringify(data, null, 2)}</pre>
+                </div>`;
+                
+            } catch (error) {
+                uploadResult.innerHTML = `<div class="result error">
+                    <strong>Upload Error:</strong><br>
+                    ${error.message}
+                </div>`;
+            }
+        }
+    </script>
+</body>
+</html>

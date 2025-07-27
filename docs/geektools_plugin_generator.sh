@@ -463,8 +463,12 @@ create_info_json() {
       "executable": true
     }
   ],
+  "dependencies": [],
   "tags": [$tags_array],
-  "min_geektools_version": "$min_version"
+  "min_geektools_version": "$min_version",
+  "homepage_url": null,
+  "repository_url": null,
+  "license": null
 }
 EOF
 

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Frontend API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .result { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+        .success { background: #d4edda; }
+        .error { background: #f8d7da; }
+        pre { background: #f8f9fa; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Frontend API Connection Test</h1>
+    
+    <button onclick="testHealth()">Test Health API</button>
+    <button onclick="testPlugins()">Test Plugins API</button>
+    <button onclick="testMetrics()">Test Metrics API</button>
+    <button onclick="testAuth()">Test Auth API</button>
+    
+    <div id="results"></div>
+
+    <script>
+        const baseURL = 'http://localhost:3000/api/v1';
+        
+        function addResult(title, success, data) {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = 'result ' + (success ? 'success' : 'error');
+            div.innerHTML = `
+                <h3>${title}</h3>
+                <pre>${JSON.stringify(data, null, 2)}</pre>
+            `;
+            results.appendChild(div);
+        }
+        
+        async function testHealth() {
+            try {
+                const response = await fetch(`${baseURL}/health`);
+                const data = await response.json();
+                addResult('Health API', response.ok, data);
+            } catch (error) {
+                addResult('Health API', false, { error: error.message });
+            }
+        }
+        
+        async function testPlugins() {
+            try {
+                const response = await fetch(`${baseURL}/plugins`);
+                const data = await response.json();
+                addResult('Plugins API', response.ok, {
+                    success: data.success,
+                    pluginCount: data.data?.plugins?.length || 0,
+                    total: data.data?.pagination?.total || 0
+                });
+            } catch (error) {
+                addResult('Plugins API', false, { error: error.message });
+            }
+        }
+        
+        async function testMetrics() {
+            try {
+                const response = await fetch(`${baseURL}/metrics`);
+                const data = await response.json();
+                addResult('Metrics API', response.ok, data);
+            } catch (error) {
+                addResult('Metrics API', false, { error: error.message });
+            }
+        }
+        
+        async function testAuth() {
+            try {
+                const response = await fetch(`${baseURL}/auth/send-code`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: 'test@example.com' })
+                });
+                const data = await response.json();
+                addResult('Auth API (send-code)', response.ok, data);
+            } catch (error) {
+                addResult('Auth API (send-code)', false, { error: error.message });
+            }
+        }
+        
+        // Auto-run health test on load
+        window.onload = () => testHealth();
+    </script>
+</body>
+</html>

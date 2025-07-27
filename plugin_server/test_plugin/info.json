@@ -1,0 +1,33 @@
+{
+  "id": "system_monitor_demo",
+  "name": "系统监控演示插件",
+  "version": "1.2.0",
+  "description": "一个功能完整的系统监控工具集合，包含CPU监控、内存检查和磁盘空间分析功能",
+  "author": "GeekTools 开发团队",
+  "scripts": [
+    {
+      "name": "CPU使用率监控",
+      "file": "cpu_monitor.sh",
+      "description": "实时显示系统CPU使用率，支持多核心显示",
+      "executable": true
+    },
+    {
+      "name": "内存使用检查",
+      "file": "memory_check.sh",
+      "description": "显示内存使用情况和可用空间",
+      "executable": true
+    },
+    {
+      "name": "磁盘空间分析",
+      "file": "disk_analyzer.sh",
+      "description": "分析磁盘空间使用情况并提供清理建议",
+      "executable": true
+    }
+  ],
+  "dependencies": [],
+  "tags": ["system", "monitoring", "performance", "tools"],
+  "min_geektools_version": "0.5.0",
+  "homepage_url": "https://github.com/geektools/system-monitor-demo",
+  "repository_url": "https://github.com/geektools/system-monitor-demo.git",
+  "license": "MIT"
+}
