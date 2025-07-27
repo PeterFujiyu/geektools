@@ -3,3 +3,4 @@
 .DS_Store
 /src/buildtag.env
 .claude
+.idea
