@@ -1,6 +1,6 @@
 [package]
 name = "geektools"
-version = "0.5.3"
+version = "0.6.0"
 edition = "2024"
 repository = "PeterFujiyu/geektools"
 
@@ -14,3 +14,4 @@ rand = "0.9.1"
 chrono = { version = "0.4", features = ["clock"] }
 flate2 = "1.1.2"
 tar = "0.4.44"
+urlencoding = "2.1"

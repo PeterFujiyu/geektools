@@ -1,4 +1,7 @@
+pub mod marketplace;
+
 use crate::fileio;
+pub use marketplace::{MarketplaceClient, MarketplaceConfig, LocalPluginScanner, MarketplacePlugin, SortBy};
 use flate2::read::GzDecoder;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};

@@ -100,11 +100,14 @@
   },
   "plugin_menu": {
     "title": "=== Plugin Management ===",
+    "marketplace": "Plugin Marketplace",
+    "local_scan": "Local Plugin Scan",
     "install": "Install Plugin",
     "list": "List Plugins",
     "uninstall": "Uninstall Plugin",
     "toggle": "Enable/Disable Plugin",
     "back": "Back to Main Menu",
-    "prompt": "Please enter your choice (1-5): "
+    "prompt": "Please enter your choice (1-5): ",
+    "prompt_extended": "Please enter your choice (1-7): "
   }
 }

@@ -3,7 +3,7 @@ mod i18n;
 mod scripts;
 mod plugins;
 
-use plugins::PluginManager;
+use plugins::{PluginManager, MarketplaceConfig};
 
 use chrono::Local;
 use once_cell::sync::Lazy;
@@ -89,7 +89,7 @@ static LOG_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| {
         .join(format!("{ts}.logs"))
 });
 
-static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| {
+pub static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| {
     let file = fileio::open_append(&*LOG_FILE_PATH).unwrap_or_else(|e| {
         eprintln!("Failed to open log file: {e}");
         File::create("/dev/null").unwrap()
@@ -128,6 +128,18 @@ macro_rules! log_eprintln {
     }};
 }
 
+// 仅记录到日志文件的宏（不输出到控制台）
+#[macro_export]
+macro_rules! log_only {
+    ($level:expr, $category:expr, $($arg:tt)*) => {{
+        use std::io::Write;
+        if let Ok(mut f) = LOG_FILE.lock() {
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            let _ = writeln!(f, "{} {} {} {}", $level, timestamp, $category, format!($($arg)*));
+        }
+    }};
+}
+
 /// 自定义脚本信息
 #[derive(Deserialize, serde::Serialize, Clone)]
 struct CustomScript {
@@ -145,6 +157,8 @@ struct UserConfig {
     language: String,
     #[serde(default)]
     custom_scripts: std::collections::HashMap<String, CustomScript>,
+    #[serde(default)]
+    marketplace_config: MarketplaceConfig,
 }
 
 impl Default for UserConfig {
@@ -152,6 +166,7 @@ impl Default for UserConfig {
         Self {
             language: "English".into(),
             custom_scripts: std::collections::HashMap::new(),
+            marketplace_config: MarketplaceConfig::default(),
         }
     }
 }
@@ -317,14 +332,16 @@ impl AppState {
     // 插件管理菜单
     fn get_plugin_menu_text(&self) -> String {
         format!(
-            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n5. {}\n{}",
+            "\n{}\n1. {}\n2. {}\n3. {}\n4. {}\n5. {}\n6. {}\n7. {}\n{}",
             self.get_translation("plugin_menu.title"),
+            self.get_translation("plugin_menu.marketplace"),
+            self.get_translation("plugin_menu.local_scan"),
             self.get_translation("plugin_menu.install"),
             self.get_translation("plugin_menu.list"),
             self.get_translation("plugin_menu.uninstall"),
             self.get_translation("plugin_menu.toggle"),
             self.get_translation("plugin_menu.back"),
-            self.get_translation("plugin_menu.prompt")
+            self.get_translation("plugin_menu.prompt_extended")
         )
     }
 
@@ -1537,6 +1554,14 @@ fn show_plugin_menu(app_state: &AppState) {
 
         match choice.trim() {
             "1" => {
+                // 插件市场管理
+                show_marketplace_menu(app_state, &mut plugin_manager);
+            }
+            "2" => {
+                // 本地插件扫描和导入
+                show_local_scan_menu(app_state, &mut plugin_manager);
+            }
+            "3" => {
                 // 安装插件
                 log_print!("请输入插件包路径 (.tar.gz 文件): ");
                 let _ = io::stdout().flush();
@@ -1561,7 +1586,7 @@ fn show_plugin_menu(app_state: &AppState) {
                     }
                 }
             }
-            "2" => {
+            "4" => {
                 // 列出插件
                 let plugins = plugin_manager.list_installed_plugins();
                 if plugins.is_empty() {
@@ -1584,7 +1609,7 @@ fn show_plugin_menu(app_state: &AppState) {
                     }
                 }
             }
-            "3" => {
+            "5" => {
                 // 卸载插件
                 let plugins = plugin_manager.list_installed_plugins();
                 if plugins.is_empty() {
@@ -1633,7 +1658,7 @@ fn show_plugin_menu(app_state: &AppState) {
                     }
                 }
             }
-            "4" => {
+            "6" => {
                 // 启用/禁用插件
                 let plugins = plugin_manager.list_installed_plugins();
                 if plugins.is_empty() {
@@ -1677,10 +1702,449 @@ fn show_plugin_menu(app_state: &AppState) {
                     }
                 }
             }
-            "5" => return, // 返回主菜单
+            "7" => return, // 返回主菜单
             _ => log_println!("{}", app_state.get_translation("main.invalid_choice")),
         }
 
         log_println!(); // 空行，美观
+    }
+}
+
+// 显示插件市场管理菜单
+fn show_marketplace_menu(app_state: &AppState, plugin_manager: &mut PluginManager) {
+    loop {
+        log_println!("\n=== 插件市场管理 ===");
+        log_println!("1. 配置市场URL和端口");
+        log_println!("2. 浏览插件市场");
+        log_println!("3. 搜索插件");
+        log_println!("4. 测试连接");
+        log_println!("5. 返回");
+        log_print!("请输入您的选择 (1-5): ");
+        let _ = io::stdout().flush();
+
+        let mut choice = String::new();
+        if io::stdin().read_line(&mut choice).is_err() {
+            log_println!("{}", app_state.get_translation("main.invalid_choice"));
+            continue;
+        }
+
+        match choice.trim() {
+            "1" => configure_marketplace(app_state),
+            "2" => browse_marketplace(app_state, plugin_manager),
+            "3" => search_marketplace(app_state, plugin_manager),
+            "4" => test_marketplace_connection(app_state),
+            "5" => return,
+            _ => log_println!("{}", app_state.get_translation("main.invalid_choice")),
+        }
+        
+        log_println!();
+    }
+}
+
+// 配置插件市场URL和端口
+fn configure_marketplace(_app_state: &AppState) {
+    let mut config = load_user_config();
+    
+    log_println!("\n=== 配置插件市场 ===");
+    log_println!("当前配置:");
+    log_println!("  URL: {}", config.marketplace_config.api_url);
+    log_println!("  端口: {}", config.marketplace_config.api_port);
+    log_println!("  超时: {}秒", config.marketplace_config.timeout_seconds);
+    
+    // 配置URL
+    log_print!("\n输入市场URL (留空保持当前值): ");
+    let _ = io::stdout().flush();
+    let mut url_input = String::new();
+    if io::stdin().read_line(&mut url_input).is_ok() {
+        let url_input = url_input.trim();
+        if !url_input.is_empty() && !url_input.eq_ignore_ascii_case("exit") {
+            config.marketplace_config.api_url = url_input.to_string();
+        }
+    }
+    
+    // 配置端口
+    log_print!("输入API端口 (留空保持当前值，默认3000): ");
+    let _ = io::stdout().flush();
+    let mut port_input = String::new();
+    if io::stdin().read_line(&mut port_input).is_ok() {
+        let port_input = port_input.trim();
+        if !port_input.is_empty() && !port_input.eq_ignore_ascii_case("exit") {
+            if let Ok(port) = port_input.parse::<u16>() {
+                config.marketplace_config.api_port = port;
+            } else {
+                log_println!("❌ 无效的端口号，保持原值");
+            }
+        }
+    }
+    
+    // 保存配置
+    match save_user_config(&config) {
+        Ok(_) => {
+            log_println!("✅ 市场配置已保存");
+            log_println!("新配置: {}:{}", 
+                config.marketplace_config.api_url, 
+                config.marketplace_config.api_port);
+        }
+        Err(e) => log_println!("❌ 保存配置失败: {}", e),
+    }
+}
+
+// 测试市场连接
+fn test_marketplace_connection(_app_state: &AppState) {
+    let config = load_user_config();
+    log_println!("\n正在测试连接到 {}:{}...", 
+        config.marketplace_config.api_url, 
+        config.marketplace_config.api_port);
+    
+    match plugins::MarketplaceClient::new(config.marketplace_config.clone()) {
+        Ok(client) => {
+            match client.test_connection() {
+                Ok(_) => log_println!("✅ 连接成功！插件市场服务正常运行"),
+                Err(e) => log_println!("❌ 连接失败: {}", e),
+            }
+        }
+        Err(e) => log_println!("❌ 创建客户端失败: {}", e),
+    }
+}
+
+// 浏览插件市场
+fn browse_marketplace(_app_state: &AppState, plugin_manager: &mut PluginManager) {
+    let config = load_user_config();
+    let client = match plugins::MarketplaceClient::new(config.marketplace_config.clone()) {
+        Ok(client) => client,
+        Err(e) => {
+            log_println!("❌ 创建市场客户端失败: {}", e);
+            return;
+        }
+    };
+
+    let mut current_page = 1;
+    let per_page = 10;
+    let mut current_sort = plugins::SortBy::Rating;
+
+    loop {
+        log_println!("\n=== 插件市场浏览 (第{}页) ===", current_page);
+        
+        match client.get_plugins(current_page, per_page, Some(current_sort)) {
+            Ok(response) => {
+                if response.plugins.is_empty() {
+                    log_println!("📋 当前页面没有插件");
+                } else {
+                    log_println!("找到 {} 个插件 (共 {} 个，第 {}/{} 页)", 
+                        response.plugins.len(), response.total, 
+                        response.page, response.total_pages);
+                    log_println!();
+
+                    for (i, plugin) in response.plugins.iter().enumerate() {
+                        log_println!("{}. {} v{}", i + 1, plugin.name, plugin.version);
+                        log_println!("   作者: {} | 评分: {:.1}/5.0 | 下载: {}", 
+                            plugin.author, plugin.rating, plugin.download_count);
+                        log_println!("   描述: {}", plugin.description);
+                        if !plugin.tags.is_empty() {
+                            log_println!("   标签: {}", plugin.tags.join(", "));
+                        }
+                        log_println!();
+                    }
+
+                    log_println!("操作选项:");
+                    log_println!("  n - 下一页 | p - 上一页 | s - 排序 | i - 安装插件");
+                    log_println!("  数字 - 查看详情 | exit - 返回");
+                    log_print!("请输入选择: ");
+                    let _ = io::stdout().flush();
+
+                    let mut input = String::new();
+                    if io::stdin().read_line(&mut input).is_ok() {
+                        let input = input.trim();
+                        match input {
+                            "n" if current_page < response.total_pages => current_page += 1,
+                            "p" if current_page > 1 => current_page -= 1,
+                            "s" => current_sort = select_sort_method(),
+                            "i" | "d" => download_plugin_from_market(&client, &response.plugins, plugin_manager),
+                            "exit" => return,
+                            num_str => {
+                                if let Ok(num) = num_str.parse::<usize>() {
+                                    if (1..=response.plugins.len()).contains(&num) {
+                                        show_plugin_details(&response.plugins[num - 1]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log_println!("❌ 获取插件列表失败: {}", e);
+                return;
+            }
+        }
+    }
+}
+
+// 选择排序方式
+fn select_sort_method() -> plugins::SortBy {
+    log_println!("\n选择排序方式:");
+    log_println!("1. 按名称排序");
+    log_println!("2. 按评分排序");
+    log_println!("3. 按下载量排序");
+    log_println!("4. 按创建时间排序");
+    log_println!("5. 按更新时间排序");
+    log_print!("请选择 (1-5): ");
+    let _ = io::stdout().flush();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_ok() {
+        if let Ok(choice) = input.trim().parse::<usize>() {
+            return plugins::SortBy::from_choice(choice).unwrap_or(plugins::SortBy::Rating);
+        }
+    }
+    plugins::SortBy::Rating
+}
+
+// 显示插件详情
+fn show_plugin_details(plugin: &plugins::MarketplacePlugin) {
+    log_println!("\n=== 插件详情 ===");
+    log_println!("名称: {}", plugin.name);
+    log_println!("版本: {}", plugin.version);
+    log_println!("作者: {}", plugin.author);
+    log_println!("描述: {}", plugin.description);
+    log_println!("评分: {:.1}/5.0", plugin.rating);
+    log_println!("下载量: {}", plugin.download_count);
+    log_println!("文件大小: {} 字节", plugin.file_size);
+    log_println!("创建时间: {}", plugin.created_at);
+    log_println!("更新时间: {}", plugin.updated_at);
+    if !plugin.tags.is_empty() {
+        log_println!("标签: {}", plugin.tags.join(", "));
+    }
+    log_println!("下载URL: {}", plugin.file_url);
+}
+
+// 从市场下载并安装插件
+fn download_plugin_from_market(client: &plugins::MarketplaceClient, plugins_list: &[plugins::MarketplacePlugin], plugin_manager: &mut PluginManager) {
+    log_print!("输入要下载的插件编号: ");
+    let _ = io::stdout().flush();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_ok() {
+        if let Ok(num) = input.trim().parse::<usize>() {
+            if (1..=plugins_list.len()).contains(&num) {
+                let plugin = &plugins_list[num - 1];
+                
+                // 显示插件信息和免责声明
+                log_println!("\n📦 准备安装插件：");
+                log_println!("   名称: {}", plugin.name);
+                log_println!("   版本: {}", plugin.version);
+                log_println!("   作者: {}", plugin.author);
+                log_println!("   描述: {}", plugin.description);
+                log_println!("   评分: {:.1}/5.0 | 下载量: {}", plugin.rating, plugin.download_count);
+                
+                // 显示安全免责声明
+                if !show_plugin_marketplace_disclaimer() {
+                    log_println!("❌ 安装已取消");
+                    return;
+                }
+                
+                let download_path = env::temp_dir().join(format!("{}-{}.tar.gz", plugin.name, plugin.version));
+                
+                log_println!("正在下载 {} v{}...", plugin.name, plugin.version);
+                
+                // 如果没有file_url，尝试构建下载URL
+                let download_url = if plugin.file_url.is_empty() {
+                    let config = load_user_config();
+                    format!("{}:{}/api/v1/plugins/{}/download", 
+                        config.marketplace_config.api_url, 
+                        config.marketplace_config.api_port,
+                        plugin.id)
+                } else {
+                    plugin.file_url.clone()
+                };
+                
+                match client.download_plugin(&download_url, &download_path) {
+                    Ok(_) => {
+                        log_println!("✅ 下载完成，正在安装...");
+                        
+                        // 直接安装下载的插件
+                        match plugin_manager.install_plugin(&download_path) {
+                            Ok(plugin_id) => {
+                                log_println!("🎉 插件安装成功！");
+                                log_println!("   插件ID: {}", plugin_id);
+                                log_println!("   插件已启用，可在脚本列表中使用");
+                                
+                                // 清理临时文件
+                                let _ = std::fs::remove_file(&download_path);
+                            }
+                            Err(e) => {
+                                log_println!("❌ 插件安装失败: {}", e);
+                                log_println!("   下载文件保留在: {:?}", download_path);
+                                log_println!("   您可以稍后手动安装");
+                            }
+                        }
+                    }
+                    Err(e) => log_println!("❌ 下载失败: {}", e),
+                }
+            }
+        }
+    }
+}
+
+// 显示插件市场安装免责声明
+fn show_plugin_marketplace_disclaimer() -> bool {
+    log_println!("\n⚠️  插件安装免责声明");
+    log_println!("════════════════════════════════════════");
+    log_println!("您即将从插件市场安装第三方插件，请注意：");
+    log_println!("• 插件来自第三方开发者，非GeekTools官方提供");
+    log_println!("• 我们无法保证第三方插件的安全性和稳定性");
+    log_println!("• 插件可能包含恶意代码或损坏您的系统");
+    log_println!("• 插件执行可能会访问您的文件和系统资源");
+    log_println!("• 安装和使用插件的风险由您自行承担");
+    log_println!("• 建议仅安装来自可信开发者的插件");
+    log_println!("════════════════════════════════════════");
+    
+    loop {
+        log_print!("您确认理解上述风险并继续安装吗？(y/N): ");
+        let _ = io::stdout().flush();
+        
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            continue;
+        }
+        
+        match input.trim().to_lowercase().as_str() {
+            "y" | "yes" | "是" | "确认" => return true,
+            "n" | "no" | "否" | "取消" | "" => return false,
+            _ => log_println!("请输入 y(是) 或 n(否)"),
+        }
+    }
+}
+
+// 搜索插件市场
+fn search_marketplace(_app_state: &AppState, plugin_manager: &mut PluginManager) {
+    let config = load_user_config();
+    let client = match plugins::MarketplaceClient::new(config.marketplace_config.clone()) {
+        Ok(client) => client,
+        Err(e) => {
+            log_println!("❌ 创建市场客户端失败: {}", e);
+            return;
+        }
+    };
+
+    log_print!("输入搜索关键词: ");
+    let _ = io::stdout().flush();
+
+    let mut query = String::new();
+    if io::stdin().read_line(&mut query).is_err() {
+        return;
+    }
+
+    let query = query.trim();
+    if query.is_empty() || query.eq_ignore_ascii_case("exit") {
+        return;
+    }
+
+    log_println!("正在搜索 '{}'...", query);
+    match client.search_plugins(query) {
+        Ok(response) => {
+            if response.plugins.is_empty() {
+                log_println!("❌ 没有找到匹配的插件");
+            } else {
+                log_println!("🔍 找到 {} 个匹配的插件:", response.total);
+                log_println!();
+
+                for (i, plugin) in response.plugins.iter().enumerate() {
+                    log_println!("{}. {} v{}", i + 1, plugin.name, plugin.version);
+                    log_println!("   作者: {} | 评分: {:.1}/5.0 | 下载: {}", 
+                        plugin.author, plugin.rating, plugin.download_count);
+                    log_println!("   描述: {}", plugin.description);
+                    log_println!();
+                }
+
+                log_println!("操作选项:");
+                log_println!("  数字 - 查看详情 | i - 安装插件 | exit - 返回");
+                log_print!("请输入选择: ");
+                let _ = io::stdout().flush();
+
+                let mut input = String::new();
+                if io::stdin().read_line(&mut input).is_ok() {
+                    let input = input.trim();
+                    match input {
+                        "i" => download_plugin_from_market(&client, &response.plugins, plugin_manager),
+                        "exit" | "" => return,
+                        num_str => {
+                            if let Ok(num) = num_str.parse::<usize>() {
+                                if (1..=response.plugins.len()).contains(&num) {
+                                    show_plugin_details(&response.plugins[num - 1]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => log_println!("❌ 搜索失败: {}", e),
+    }
+}
+
+// 显示本地扫描菜单
+fn show_local_scan_menu(_app_state: &AppState, plugin_manager: &mut PluginManager) {
+    let scanner = plugins::LocalPluginScanner::new();
+    
+    log_println!("\n=== 本地插件扫描 ===");
+    log_println!("正在扫描本地目录中的插件文件...");
+    
+    let local_plugins = scanner.scan_plugins();
+    
+    if local_plugins.is_empty() {
+        log_println!("❌ 未找到任何插件文件");
+        log_println!("扫描目录包括: ~/Downloads, ~/Desktop, ~/Documents, 当前目录");
+        log_println!("请确保插件文件为 .tar.gz 格式");
+        return;
+    }
+    
+    log_println!("🔍 找到 {} 个潜在的插件文件:", local_plugins.len());
+    log_println!();
+    
+    for (i, plugin) in local_plugins.iter().enumerate() {
+        log_println!("{}. {}", i + 1, plugin.file_name);
+        log_println!("   路径: {:?}", plugin.file_path);
+        log_println!("   大小: {} 字节", plugin.file_size);
+        log_println!("   修改时间: {}", plugin.modified_time);
+        log_println!("   推测名称: {}", plugin.estimated_name);
+        log_println!("   推测版本: {}", plugin.estimated_version);
+        log_println!();
+    }
+    
+    loop {
+        log_print!("输入要安装的插件编号 (1-{}), 或输入 'exit' 返回: ", local_plugins.len());
+        let _ = io::stdout().flush();
+        
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            continue;
+        }
+        
+        let input = input.trim();
+        if input.eq_ignore_ascii_case("exit") {
+            return;
+        }
+        
+        if let Ok(num) = input.parse::<usize>() {
+            if (1..=local_plugins.len()).contains(&num) {
+                let plugin = &local_plugins[num - 1];
+                
+                log_println!("正在安装插件: {}", plugin.file_name);
+                match plugin_manager.install_plugin(&plugin.file_path) {
+                    Ok(plugin_id) => {
+                        log_println!("✅ 插件安装成功！插件 ID: {}", plugin_id);
+                        return;
+                    }
+                    Err(e) => {
+                        log_println!("❌ 插件安装失败: {}", e);
+                    }
+                }
+            } else {
+                log_println!("❌ 无效的选择");
+            }
+        } else {
+            log_println!("❌ 无效的输入");
+        }
     }
 }
