@@ -69,8 +69,8 @@
   },
   "main": {
     "welcome": "---- Hey this a rust project for geek! ----",
-    "version_msg": "This build version is {}, see details on {} please.",
-    "buildtag_msg": "This build tag is {}, see details on {} please.",
+    "version_msg": "This build version is {0}, see details on {1} please.",
+    "buildtag_msg": "This build tag is {0}, see details on {1} please.",
     "invalid_choice": "Invalid choice, please try again.",
     "invalid_language": "Invalid choice, language not changed.",
     "exit_message": "Exiting program. Goodbye!"
@@ -109,5 +109,36 @@
     "back": "Back to Main Menu",
     "prompt": "Please enter your choice (1-5): ",
     "prompt_extended": "Please enter your choice (1-7): "
+  },
+  "error": {
+    "file_operation": "File operation failed: {path}",
+    "network": "Network request failed: {url}",
+    "config": "Configuration error: {message}",
+    "script_execution": "Script execution failed: {script} (exit code: {code})",
+    "plugin": "Plugin error: {plugin} - {message}",
+    "localization": "Localization error: {key}",
+    "permission": "Permission denied: {operation}",
+    "validation": "Validation failed: {field} - {message}"
+  },
+  "recovery": {
+    "check_permissions": "Check permissions for path: {path}",
+    "run_as_admin": "Try running as administrator",
+    "create_directory": "Create missing directory: {path}",
+    "check_path": "Verify path exists: {path}",
+    "retry_operation": "Retry the operation",
+    "check_connection": "Check your internet connection",
+    "check_proxy": "Check proxy settings",
+    "retry_later": "Try again later",
+    "check_config_syntax": "Check configuration file syntax",
+    "restore_backup": "Restore from backup configuration",
+    "check_script_permissions": "Check script file permissions",
+    "check_dependencies": "Verify script dependencies",
+    "reinstall_plugin": "Reinstall the plugin",
+    "check_plugin_compatibility": "Check plugin compatibility",
+    "check_language_files": "Check language files integrity",
+    "reset_language": "Reset to default language",
+    "check_file_permissions": "Check file permissions",
+    "check_input_format": "Check input format",
+    "refer_to_documentation": "Refer to documentation"
   }
 }

@@ -64,9 +64,12 @@ fn create_script_info(name: &str) -> io::Result<ScriptInfo> {
 }
 
 /// 把指定脚本写到 ~/.geektools/scripts/(脚本名)/ 目录并返回可执行路径
-pub fn materialize(name: &str) -> io::Result<PathBuf> {
+pub fn materialize(name: &str) -> crate::errors::Result<PathBuf> {
     // 1) 从 embed 中取二进制内容
-    let data = Assets::get(name).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, name))?;
+    let data = Assets::get(name).ok_or_else(|| crate::errors::GeekToolsError::FileOperationError {
+        path: name.to_string(),
+        source: io::Error::new(io::ErrorKind::NotFound, "Asset not found"),
+    })?;
 
     // 2) 创建脚本专用目录 ~/.geektools/scripts/(脚本名)/
     let script_name = name.split('.').next().unwrap_or(name);
@@ -90,8 +93,7 @@ pub fn materialize(name: &str) -> io::Result<PathBuf> {
     let info_file = script_dir.join("info.json");
     if !info_file.exists() {
         let script_info = create_script_info(name)?;
-        let json_content = serde_json::to_string_pretty(&script_info)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let json_content = serde_json::to_string_pretty(&script_info)?;
         fileio::write(&info_file, &json_content)?;
     }
     
@@ -231,9 +233,9 @@ fn resolve_dependencies(script_name: &str) -> Result<Vec<String>, String> {
 }
 
 /// 把脚本及其依赖按顺序写到 ~/.geektools/scripts/ 目录并返回执行顺序
-pub fn materialize_with_deps(name: &str) -> io::Result<Vec<PathBuf>> {
+pub fn materialize_with_deps(name: &str) -> crate::errors::Result<Vec<PathBuf>> {
     let execution_order = resolve_dependencies(name)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        .map_err(|e| crate::errors::GeekToolsError::ConfigError { message: e })?;
     
     let mut paths = Vec::new();
     

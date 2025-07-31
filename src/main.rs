@@ -2,8 +2,16 @@ mod fileio;
 mod i18n;
 mod scripts;
 mod plugins;
+mod errors;
+mod recovery;
+mod logging;
+mod config;
 
 use plugins::{PluginManager, MarketplaceConfig};
+use errors::{GeekToolsError, Result};
+use recovery::{RecoveryHandler, RetryConfig, execute_with_recovery};
+use logging::{LoggingConfig, init_logging};
+use config::{Config, ConfigManager, CustomScript};
 
 use chrono::Local;
 use once_cell::sync::Lazy;
@@ -31,7 +39,7 @@ const BUILD_TAG: &str = include_str!("./buildtag.env");
 // 1️⃣ 统一的调试宏：只在 DEBUG 文ce开启时打印
 // ────────────────────────────────────────────────────────────────────────────
 static DEBUG_ENABLED: Lazy<bool> = Lazy::new(|| {
-    fileio::read("DEBUG")
+    fileio::compat::read_compat("DEBUG")
         .map(|s| s.trim() == "DEBUG=true")
         .unwrap_or(false)
 });
@@ -44,28 +52,8 @@ macro_rules! debug_log {
     };
 }
 
-// ───────────────────────────────── 语言枚举 ────────────────────────────────
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Language {
-    English,
-    Chinese,
-}
-
-// ───────────────────────────────── 翻译加载 ────────────────────────────────
-use i18n::{EN_US_JSON, ZH_CN_JSON};
-
-static TRANSLATIONS: Lazy<Arc<RwLock<HashMap<Language, Value>>>> = Lazy::new(|| {
-    let mut translations = HashMap::new();
-
-    if let Ok(json) = serde_json::from_str(EN_US_JSON) {
-        translations.insert(Language::English, json);
-    }
-    if let Ok(json) = serde_json::from_str(ZH_CN_JSON) {
-        translations.insert(Language::Chinese, json);
-    }
-
-    Arc::new(RwLock::new(translations))
-});
+// ───────────────────────────────── 语言和翻译系统 ────────────────────────────────
+use i18n::{Language, t};
 
 /// 配置文件路径：~/.geektools/config.json
 static CONFIG_PATH: Lazy<PathBuf> = Lazy::new(|| {
@@ -90,10 +78,19 @@ static LOG_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| {
 });
 
 pub static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| {
-    let file = fileio::open_append(&*LOG_FILE_PATH).unwrap_or_else(|e| {
-        eprintln!("Failed to open log file: {e}");
-        File::create("/dev/null").unwrap()
-    });
+    // Ensure parent directory exists
+    if let Some(parent) = LOG_FILE_PATH.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    
+    let file = File::options()
+        .create(true)
+        .append(true)
+        .open(&*LOG_FILE_PATH)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to open log file: {e}");
+            File::create("/dev/null").unwrap()
+        });
     Mutex::new(file)
 });
 
@@ -140,154 +137,52 @@ macro_rules! log_only {
     }};
 }
 
-/// 自定义脚本信息
-#[derive(Deserialize, serde::Serialize, Clone)]
-struct CustomScript {
-    url: String,
-    name: String,
-    description: String,
-    added_time: String,
-    #[serde(default)]
-    file_path: Option<String>,
-}
-
-/// 存储在 ~/.geektools/config.json 中的配置
-#[derive(Deserialize, serde::Serialize)]
-struct UserConfig {
-    language: String,
-    #[serde(default)]
-    custom_scripts: std::collections::HashMap<String, CustomScript>,
-    #[serde(default)]
-    marketplace_config: MarketplaceConfig,
-}
-
-impl Default for UserConfig {
-    fn default() -> Self {
-        Self {
-            language: "English".into(),
-            custom_scripts: std::collections::HashMap::new(),
-            marketplace_config: MarketplaceConfig::default(),
-        }
-    }
-}
-
-/// 查询 IP-API 的返回结构
-#[derive(Deserialize)]
-struct IpApiResp {
-    #[serde(rename = "countryCode")]
-    country_code: String,
-}
-
-/// 加载或初始化用户语言
-fn load_or_init_language() -> Language {
-    // 1. 尝试读取现有配置
-    match fileio::read(&*CONFIG_PATH) {
-        Ok(text) => {
-            if let Ok(cfg) = serde_json::from_str::<UserConfig>(&text) {
-                return match cfg.language.as_str() {
-                    "Chinese" => Language::Chinese,
-                    _ => Language::English,
-                };
-            }
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => { /* 文件不存在，走初始化 */ }
-        Err(e) => {
-            log_eprintln!("Failed to read config: {e}");
-        }
-    }
-
-    // 2. 文件不存在或解析失败 → 调用 IP API 决定默认语言
-    let default_lang = match Client::new().get("http://ip-api.com/json/").send() {
-        Ok(resp) => {
-            if let Ok(json) = resp.json::<IpApiResp>() {
-                matches!(json.country_code.as_str(), "CN" | "HK" | "MO" | "TW")
-                    .then_some(Language::Chinese)
-                    .unwrap_or(Language::English)
-            } else {
-                Language::English
-            }
-        }
-        Err(err) => {
-            log_eprintln!("IP API request failed: {err}");
-            Language::English
-        }
-    };
-
-    // 3. 保存到新配置文件
-    let _ = save_language_to_config(default_lang);
-
-    default_lang
-}
-
-/// 加载完整用户配置
-fn load_user_config() -> UserConfig {
-    match fileio::read(&*CONFIG_PATH) {
-        Ok(text) => {
-            serde_json::from_str::<UserConfig>(&text).unwrap_or_default()
-        }
-        Err(_) => UserConfig::default(),
-    }
-}
-
-/// 保存完整用户配置
-fn save_user_config(config: &UserConfig) -> io::Result<()> {
-    let json = serde_json::to_string_pretty(config).unwrap_or_else(|_| "{}".into());
-    fileio::write(&*CONFIG_PATH, &json)
-}
-
-/// 将语言写回 ~/.geektools/config.json
-fn save_language_to_config(lang: Language) -> io::Result<()> {
-    let mut config = load_user_config();
-    config.language = match lang {
-        Language::Chinese => "Chinese".into(),
-        Language::English => "English".into(),
-    };
-    save_user_config(&config)
-}
-
-// ───────────────────────────────── 应用状态 ────────────────────────────────
+/// 应用程序状态
 struct AppState {
-    language: Language,
+    config_manager: ConfigManager,
+    current_language: Language,
+    recovery_handler: RecoveryHandler,
 }
 
 impl AppState {
-    fn new() -> Self {
-        let lang = load_or_init_language();
-        AppState { language: lang }
+    fn new() -> Result<Self> {
+        let config_manager = ConfigManager::new(CONFIG_PATH.clone())?;
+        let config = config_manager.get_config();
+        let config_read = config.read().unwrap();
+        
+        let current_language = match config_read.language.as_str() {
+            "zh" | "Chinese" => Language::Chinese,
+            _ => Language::English,
+        };
+        
+        let recovery_handler = RecoveryHandler::new(
+            RetryConfig::default(),
+            current_language,
+        );
+        
+        // Initialize logging
+        let _ = init_logging(&config_read.logging, Some(LOG_FILE_PATH.clone()));
+        
+        Ok(Self {
+            config_manager,
+            current_language,
+            recovery_handler,
+        })
     }
 
     // 基础翻译
     fn get_translation(&self, key_path: &str) -> String {
-        if let Ok(translations) = TRANSLATIONS.read() {
-            if let Some(lang_translations) = translations.get(&self.language) {
-                let mut current = lang_translations;
-                for key in key_path.split('.') {
-                    if let Some(value) = current.get(key) {
-                        current = value;
-                    } else {
-                        return key_path.to_string(); // 未找到
-                    }
-                }
-                if let Some(text) = current.as_str() {
-                    return text.to_string();
-                }
-            }
-        }
-        key_path.to_string() // 回退
+        t(key_path, &[], self.current_language)
     }
 
     // 含占位符替换
     fn get_formatted_translation(&self, key_path: &str, args: &[&str]) -> String {
-        let mut result = self.get_translation(key_path);
-        for (i, arg) in args.iter().enumerate() {
-            let numbered = format!("{{{}}}", i);
-            if result.contains(&numbered) {
-                result = result.replace(&numbered, arg);
-            } else if result.contains("{}") {
-                result = result.replacen("{}", arg, 1);
-            }
-        }
-        result
+        let indices: Vec<String> = (0..args.len()).map(|i| i.to_string()).collect();
+        let params: Vec<(&str, &str)> = indices.iter()
+            .zip(args.iter())
+            .map(|(idx, &val)| (idx.as_str(), val))
+            .collect();
+        t(key_path, &params, self.current_language)
     }
 
     // 主菜单文本
@@ -359,6 +254,46 @@ impl AppState {
     }
 }
 
+/// 查询 IP-API 的返回结构
+#[derive(Deserialize)]
+struct IpApiResp {
+    #[serde(rename = "countryCode")]
+    country_code: String,
+}
+
+/// 加载或初始化用户语言 (legacy function for backward compatibility)
+fn load_or_init_language() -> Language {
+    // Try to load from the new config system first
+    if let Ok(config_manager) = ConfigManager::new(CONFIG_PATH.clone()) {
+        let config = config_manager.get_config();
+        let config_read = config.read().unwrap();
+        return match config_read.language.as_str() {
+            "zh" => Language::Chinese,
+            _ => Language::English,
+        };
+    }
+
+    // Fallback to IP API detection
+    let default_lang = match Client::new().get("http://ip-api.com/json/").send() {
+        Ok(resp) => {
+            if let Ok(json) = resp.json::<IpApiResp>() {
+                matches!(json.country_code.as_str(), "CN" | "HK" | "MO" | "TW")
+                    .then_some(Language::Chinese)
+                    .unwrap_or(Language::English)
+            } else {
+                Language::English
+            }
+        }
+        Err(err) => {
+            log_eprintln!("IP API request failed: {err}");
+            Language::English
+        }
+    };
+
+    default_lang
+}
+
+
 #[derive(Deserialize)]
 struct GhAsset {
     browser_download_url: String,
@@ -376,7 +311,7 @@ struct GhRelease {
 // ────────────────────────────────────────────────────────────────────────────
 // 2️⃣ fetch_releases 内全部 println! → debug_log!
 // ────────────────────────────────────────────────────────────────────────────
-fn fetch_releases() -> Result<Vec<GhRelease>, String> {
+fn fetch_releases() -> std::result::Result<Vec<GhRelease>, GeekToolsError> {
     let repo = repo_path_from_cargo()?;
     let url = format!("https://api.github.com/repos/{repo}/releases");
     debug_log!("[DEBUG] 即将请求 GitHub API: {url}");
@@ -387,24 +322,23 @@ fn fetch_releases() -> Result<Vec<GhRelease>, String> {
             env!("CARGO_PKG_VERSION"),
             "PeterFujiyu/geektools"
         ))
-        .build()
-        .map_err(|e| format!("构建 client 失败: {e}"))?;
+        .build()?;
 
     let resp = client
         .get(&url)
-        .send()
-        .map_err(|e| format!("请求失败: {e}"))?;
+        .send()?;
     debug_log!("[DEBUG] 收到响应，状态码: {}", resp.status());
 
     if !resp.status().is_success() {
-        return Err(format!("HTTP 非成功状态: {}", resp.status()));
+        return Err(GeekToolsError::ConfigError {
+            message: format!("HTTP non-success status: {}", resp.status()),
+        });
     }
 
-    let text = resp.text().map_err(|e| format!("读取响应正文失败: {e}"))?;
+    let text = resp.text()?;
     debug_log!("[DEBUG] 响应体长度: {}", text.len());
 
-    let releases: Vec<GhRelease> =
-        serde_json::from_str(&text).map_err(|e| format!("JSON 解析失败: {e}"))?;
+    let releases: Vec<GhRelease> = serde_json::from_str(&text)?;
     debug_log!("[DEBUG] 解析成功，共 {} 条", releases.len());
 
     Ok(releases)
@@ -419,18 +353,18 @@ fn asset_name() -> Option<&'static str> {
     }
 }
 
-fn download_and_replace(url: &str) -> Result<(), String> {
-    let resp = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
-    let bytes = resp.bytes().map_err(|e| e.to_string())?;
-    let exe = env::current_exe().map_err(|e| e.to_string())?;
+fn download_and_replace(url: &str) -> std::result::Result<(), GeekToolsError> {
+    let resp = reqwest::blocking::get(url)?;
+    let bytes = resp.bytes()?;
+    let exe = env::current_exe()?;
     let mut tmp = exe.clone();
     tmp.set_extension("tmp");
-    fileio::write_bytes(&tmp, &bytes).map_err(|e| e.to_string())?;
+    fileio::write_bytes(&tmp, &bytes)?;
     #[cfg(unix)]
     {
         let _ = fileio::set_executable(&tmp);
     }
-    fileio::rename(&tmp, &exe).map_err(|e| e.to_string())?;
+    fileio::rename(&tmp, &exe)?;
     Ok(())
 }
 
@@ -457,7 +391,7 @@ fn update_to_release(release: &GhRelease, app_state: &AppState) {
         Ok(_) => log_println!("{}", app_state.get_translation("update_menu.success")),
         Err(e) => log_println!(
             "{}",
-            app_state.get_formatted_translation("update_menu.replace_failed", &[&e])
+            app_state.get_formatted_translation("update_menu.replace_failed", &[&e.to_string()])
         ),
     }
 }
@@ -473,7 +407,7 @@ fn update_to_latest(prerelease: bool, app_state: &AppState) {
         }
         Err(e) => log_println!(
             "{}",
-            app_state.get_formatted_translation("update_menu.download_failed", &[&e])
+            app_state.get_formatted_translation("update_menu.download_failed", &[&e.to_string()])
         ),
     }
 }
@@ -542,7 +476,7 @@ fn choose_other(app_state: &AppState) {
             log_eprintln!("[DEBUG] fetch_releases() 失败: {e}");
             log_println!(
                 "{}",
-                app_state.get_formatted_translation("update_menu.download_failed", &[&e])
+                app_state.get_formatted_translation("update_menu.download_failed", &[&e.to_string()])
             );
         }
     }
@@ -636,7 +570,7 @@ fn run_existing_script(app_state: &AppState) {
 
     // 2. 加载自定义脚本
     let config = load_user_config();
-    let custom_scripts: Vec<(&String, &CustomScript)> = config.custom_scripts.iter().collect();
+    let custom_scripts: Vec<(usize, &CustomScript)> = config.custom_scripts.iter().enumerate().collect();
 
     // 2.5. 加载插件脚本
     let plugin_manager = PluginManager::new();
@@ -664,7 +598,7 @@ fn run_existing_script(app_state: &AppState) {
         let desc = map
             .get(*name)
             .and_then(|v| {
-                v.get(match app_state.language {
+                v.get(match app_state.current_language {
                     Language::English => "English",
                     Language::Chinese => "Chinese",
                 })
@@ -676,7 +610,7 @@ fn run_existing_script(app_state: &AppState) {
 
     // 自定义脚本
     for (i, (_, script)) in custom_scripts.iter().enumerate() {
-        log_println!("{}. {} - {} [自定义]", names.len() + i + 1, script.name, script.description);
+        log_println!("{}. {} - {} [自定义]", names.len() + i + 1, script.name, script.description.as_deref().unwrap_or("无描述"));
     }
 
     // 插件脚本
@@ -764,8 +698,12 @@ fn run_existing_script(app_state: &AppState) {
                     match &custom_script.file_path {
                         Some(file_path) => run_custom_script_from_file(file_path, app_state),
                         None => {
-                            log_println!("⚠️  脚本没有保存的文件路径，正在从URL重新下载...");
-                            run_custom_script_from_url(&custom_script.url, app_state);
+                            if let Some(url) = &custom_script.url {
+                                log_println!("⚠️  脚本没有保存的文件路径，正在从URL重新下载...");
+                                run_custom_script_from_url(url, app_state);
+                            } else {
+                                log_println!("❌ 脚本既没有文件路径也没有URL，无法执行");
+                            }
                         }
                     }
                 } else {
@@ -1140,7 +1078,13 @@ fn run_script_from_url(app_state: &AppState) {
 // ─────────────────────────────────── 主函数 ───────────────────────────────
 
 fn main() {
-    let mut app_state = AppState::new();
+    let mut app_state = match AppState::new() {
+        Ok(state) => state,
+        Err(e) => {
+            eprintln!("Failed to initialize application: {}", e);
+            std::process::exit(1);
+        }
+    };
     log_println!("{}", app_state.get_translation("main.welcome"));
 
     log_println!(
@@ -1220,12 +1164,12 @@ fn show_settings_menu(app_state: &mut AppState) {
                 }
                 match lang_choice.trim() {
                     "1" => {
-                        app_state.language = Language::English;
-                        let _ = save_language_to_config(app_state.language);
+                        app_state.current_language = Language::English;
+                        let _ = save_language_to_config(app_state.current_language);
                     }
                     "2" => {
-                        app_state.language = Language::Chinese;
-                        let _ = save_language_to_config(app_state.language);
+                        app_state.current_language = Language::Chinese;
+                        let _ = save_language_to_config(app_state.current_language);
                     }
                     _ => log_println!("{}", app_state.get_translation("main.invalid_language")),
                 }
@@ -1234,8 +1178,15 @@ fn show_settings_menu(app_state: &mut AppState) {
             "3" => {
                 // 清理个性化设置
                 if let Err(e) = fileio::remove_file(&*CONFIG_PATH) {
-                    if e.kind() != io::ErrorKind::NotFound {
-                        log_println!("Failed to clear personalization: {}", e);
+                    // Only show error if it's not a "file not found" error
+                    match &e {
+                        GeekToolsError::FileOperationError { source, .. } 
+                            if source.kind() == io::ErrorKind::NotFound => {
+                            // Ignore file not found errors
+                        }
+                        _ => {
+                            log_println!("Failed to clear personalization: {}", e);
+                        }
                     }
                 }
                 log_println!(
@@ -1253,7 +1204,7 @@ fn show_settings_menu(app_state: &mut AppState) {
 }
 
 // 从 Cargo.toml 读取 repository 信息
-fn repo_path_from_cargo() -> Result<String, String> {
+fn repo_path_from_cargo() -> std::result::Result<String, GeekToolsError> {
     // 在编译时直接获取 repository 字段
     Ok(env!("CARGO_PKG_REPOSITORY").to_string())
 }
@@ -1285,15 +1236,16 @@ fn show_security_warning(app_state: &AppState) -> bool {
 }
 
 /// 从URL下载脚本内容
-fn download_script_content(url: &str) -> Result<String, String> {
-    let resp = reqwest::blocking::get(url)
-        .map_err(|e| format!("下载失败: {}", e))?;
+fn download_script_content(url: &str) -> std::result::Result<String, GeekToolsError> {
+    let resp = reqwest::blocking::get(url)?;
     
     if !resp.status().is_success() {
-        return Err(format!("HTTP错误: {}", resp.status()));
+        return Err(GeekToolsError::ConfigError {
+            message: format!("HTTP error: {}", resp.status()),
+        });
     }
     
-    resp.text().map_err(|e| format!("读取内容失败: {}", e))
+    resp.text().map_err(GeekToolsError::from)
 }
 
 /// 解析脚本内容获取描述信息
@@ -1403,15 +1355,16 @@ fn add_custom_script(app_state: &AppState) {
             }
             
             let custom_script = CustomScript {
-                url: url.to_string(),
                 name: final_name.clone(),
-                description: final_desc.clone(),
-                added_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                description: Some(final_desc.clone()),
+                url: Some(url.to_string()),
                 file_path: Some(script_file_path.to_string_lossy().to_string()),
+                enabled: true,
+                last_updated: Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()),
             };
             
             let mut config = load_user_config();
-            config.custom_scripts.insert(script_id.clone(), custom_script);
+            config.custom_scripts.push(custom_script);
             
             match save_user_config(&config) {
                 Ok(_) => {
@@ -1439,11 +1392,11 @@ fn list_custom_scripts(app_state: &AppState) {
     }
     
     log_println!("{}", app_state.get_translation("custom_script.list_title"));
-    for (id, script) in &config.custom_scripts {
-        log_println!("📜 {} ({})", script.name, id);
-        log_println!("   描述: {}", script.description);
-        log_println!("   URL: {}", script.url);
-        log_println!("   添加时间: {}", script.added_time);
+    for (idx, script) in config.custom_scripts.iter().enumerate() {
+        log_println!("📜 {} ({})", script.name, idx + 1);
+        log_println!("   描述: {}", script.description.as_deref().unwrap_or("无描述"));
+        log_println!("   URL: {}", script.url.as_deref().unwrap_or("本地文件"));
+        log_println!("   更新时间: {}", script.last_updated.as_deref().unwrap_or("未知"));
         log_println!();
     }
 }
@@ -1458,10 +1411,10 @@ fn remove_custom_script(app_state: &AppState) {
     }
     
     log_println!("{}", app_state.get_translation("custom_script.list_for_removal"));
-    let scripts: Vec<(&String, &CustomScript)> = config.custom_scripts.iter().collect();
+    let scripts: Vec<(usize, &CustomScript)> = config.custom_scripts.iter().enumerate().collect();
     
-    for (i, (id, script)) in scripts.iter().enumerate() {
-        log_println!("{}. {} ({})", i + 1, script.name, id);
+    for (i, (idx, script)) in scripts.iter().enumerate() {
+        log_println!("{}. {}", i + 1, script.name);
     }
     
     log_print!("选择要删除的脚本编号 (1-{}, 或输入 exit 退出): ", scripts.len());
@@ -1479,9 +1432,8 @@ fn remove_custom_script(app_state: &AppState) {
     
     if let Ok(idx) = input.parse::<usize>() {
         if (1..=scripts.len()).contains(&idx) {
-            let (id, script) = scripts[idx - 1];
+            let (script_idx, script) = scripts[idx - 1];
             let script_name = script.name.clone();  // 克隆名称避免生命周期问题
-            let script_id = id.clone();  // 克隆ID
             
             log_print!("确认删除脚本 '{}' 吗? (y/N): ", script_name);
             let _ = io::stdout().flush();
@@ -1502,7 +1454,7 @@ fn remove_custom_script(app_state: &AppState) {
                     }
                 }
                 
-                config.custom_scripts.remove(&script_id);
+                config.custom_scripts.remove(script_idx);
                 match save_user_config(&config) {
                     Ok(_) => log_println!("✅ 脚本 '{}' 已删除", script_name),
                     Err(e) => log_println!("❌ 删除失败: {}", e),
@@ -2147,4 +2099,46 @@ fn show_local_scan_menu(_app_state: &AppState, plugin_manager: &mut PluginManage
             log_println!("❌ 无效的输入");
         }
     }
+}
+
+// Legacy compatibility functions for backward compatibility with older code
+fn load_user_config() -> Config {
+    let config_path = PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+        .join(".geektools")
+        .join("config.json");
+    
+    match ConfigManager::new(config_path) {
+        Ok(manager) => {
+            let config = manager.get_config();
+            config.read().unwrap().clone()
+        }
+        Err(_) => Config::default(),
+    }
+}
+
+fn save_user_config(config: &Config) -> std::result::Result<(), GeekToolsError> {
+    let config_path = PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+        .join(".geektools")
+        .join("config.json");
+    
+    let manager = ConfigManager::new(config_path)?;
+    manager.update_config(|cfg| {
+        *cfg = config.clone();
+        Ok(())
+    })
+}
+
+fn save_language_to_config(language: Language) -> std::result::Result<(), GeekToolsError> {
+    let config_path = PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+        .join(".geektools")
+        .join("config.json");
+    
+    let manager = ConfigManager::new(config_path)?;
+    manager.update_config(|cfg| {
+        cfg.language = match language {
+            Language::Chinese => "zh".to_string(),
+            Language::English => "en".to_string(),
+        };
+        Ok(())
+    })
 }

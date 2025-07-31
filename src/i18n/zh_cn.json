@@ -69,8 +69,8 @@
   },
   "main": {
     "welcome": "---- 这是一个极客的Rust项目！----",
-    "version_msg": "=== 此构建版本为{},详情在 {} 查看 ===",
-    "buildtag_msg": "=== 此构建标签为{}, 详情在 {} ===",
+    "version_msg": "=== 此构建版本为{0},详情在 {1} 查看 ===",
+    "buildtag_msg": "=== 此构建标签为{0}, 详情在 {1} ===",
     "invalid_choice": "无效的选择，请重试。",
     "invalid_language": "无效的选择，语言未更改。",
     "exit_message": "正在退出程序。再见！"
@@ -109,5 +109,36 @@
     "back": "返回主菜单",
     "prompt": "请输入您的选择 (1-5): ",
     "prompt_extended": "请输入您的选择 (1-7): "
+  },
+  "error": {
+    "file_operation": "文件操作失败：{path}",
+    "network": "网络请求失败：{url}",
+    "config": "配置错误：{message}",
+    "script_execution": "脚本执行失败：{script}（退出代码：{code}）",
+    "plugin": "插件错误：{plugin} - {message}",
+    "localization": "本地化错误：{key}",
+    "permission": "权限被拒绝：{operation}",
+    "validation": "验证失败：{field} - {message}"
+  },
+  "recovery": {
+    "check_permissions": "检查路径权限：{path}",
+    "run_as_admin": "尝试以管理员身份运行",
+    "create_directory": "创建缺失的目录：{path}",
+    "check_path": "验证路径是否存在：{path}",
+    "retry_operation": "重试操作",
+    "check_connection": "检查您的网络连接",
+    "check_proxy": "检查代理设置",
+    "retry_later": "稍后重试",
+    "check_config_syntax": "检查配置文件语法",
+    "restore_backup": "从备份配置恢复",
+    "check_script_permissions": "检查脚本文件权限",
+    "check_dependencies": "验证脚本依赖",
+    "reinstall_plugin": "重新安装插件",
+    "check_plugin_compatibility": "检查插件兼容性",
+    "check_language_files": "检查语言文件完整性",
+    "reset_language": "重置为默认语言",
+    "check_file_permissions": "检查文件权限",
+    "check_input_format": "检查输入格式",
+    "refer_to_documentation": "参考文档"
   }
 }
