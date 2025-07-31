@@ -12,21 +12,31 @@ pub enum Language {
     Chinese,
 }
 
+// 性能优化：按需延迟加载翻译，避免启动时解析所有JSON
 static TRANSLATIONS: Lazy<Arc<RwLock<HashMap<Language, Value>>>> = Lazy::new(|| {
-    let mut translations = HashMap::new();
-
-    if let Ok(json) = serde_json::from_str(EN_US_JSON) {
-        translations.insert(Language::English, json);
-    }
-    if let Ok(json) = serde_json::from_str(ZH_CN_JSON) {
-        translations.insert(Language::Chinese, json);
-    }
-
-    Arc::new(RwLock::new(translations))
+    Arc::new(RwLock::new(HashMap::new()))
 });
 
-/// 翻译函数：根据 key 和参数获取翻译文本
+/// 延迟加载指定语言的翻译
+fn ensure_language_loaded(lang: Language) {
+    let mut translations = TRANSLATIONS.write().unwrap();
+    if !translations.contains_key(&lang) {
+        let json_content = match lang {
+            Language::English => EN_US_JSON,
+            Language::Chinese => ZH_CN_JSON,
+        };
+        
+        if let Ok(json) = serde_json::from_str(json_content) {
+            translations.insert(lang, json);
+        }
+    }
+}
+
+/// 翻译函数：根据 key 和参数获取翻译文本，按需加载
 pub fn t(key: &str, params: &[(&str, &str)], lang: Language) -> String {
+    // 确保语言包已加载
+    ensure_language_loaded(lang);
+    
     let translations = TRANSLATIONS.read().unwrap();
     
     if let Some(lang_map) = translations.get(&lang) {

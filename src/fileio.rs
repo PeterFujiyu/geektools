@@ -1,19 +1,74 @@
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::sync::{Mutex, Arc};
+use std::time::{SystemTime, Duration};
+use once_cell::sync::Lazy;
 use crate::errors::{GeekToolsError, Result};
 
-/// Read file content as UTF-8 string
+/// 文件内容缓存条目
+#[derive(Clone)]
+struct CacheEntry {
+    content: String,
+    last_modified: SystemTime,
+    cached_at: SystemTime,
+}
+
+/// 全局文件读取缓存，减少重复I/O
+static FILE_CACHE: Lazy<Arc<Mutex<HashMap<PathBuf, CacheEntry>>>> = Lazy::new(|| {
+    Arc::new(Mutex::new(HashMap::new()))
+});
+
+const CACHE_TTL: Duration = Duration::from_secs(300); // 5分钟缓存
+
+/// 检查缓存条目是否有效
+fn is_cache_valid(entry: &CacheEntry, file_modified: SystemTime) -> bool {
+    let now = SystemTime::now();
+    entry.last_modified >= file_modified && 
+    now.duration_since(entry.cached_at).unwrap_or(Duration::MAX) < CACHE_TTL
+}
+
+/// Read file content as UTF-8 string with caching
 pub fn read(path: impl AsRef<Path>) -> Result<String> {
-    fs::read_to_string(&path).map_err(|e| GeekToolsError::FileOperationError {
-        path: path.as_ref().display().to_string(),
+    let path_buf = path.as_ref().to_path_buf();
+    
+    // 首先检查缓存
+    if let Ok(cache) = FILE_CACHE.lock() {
+        if let (Some(entry), Ok(metadata)) = (cache.get(&path_buf), fs::metadata(&path_buf)) {
+            if let Ok(modified) = metadata.modified() {
+                if is_cache_valid(entry, modified) {
+                    return Ok(entry.content.clone());
+                }
+            }
+        }
+    }
+    
+    // 缓存未命中，读取文件
+    let content = fs::read_to_string(&path_buf).map_err(|e| GeekToolsError::FileOperationError {
+        path: path_buf.display().to_string(),
         source: e,
-    })
+    })?;
+    
+    // 缓存读取结果
+    if let (Ok(mut cache), Ok(metadata)) = (FILE_CACHE.lock(), fs::metadata(&path_buf)) {
+        if let Ok(modified) = metadata.modified() {
+            cache.insert(path_buf, CacheEntry {
+                content: content.clone(),
+                last_modified: modified,
+                cached_at: SystemTime::now(),
+            });
+        }
+    }
+    
+    Ok(content)
 }
 
 /// Write a UTF-8 string to file, creating parent directories if needed
 pub fn write(path: impl AsRef<Path>, data: &str) -> Result<()> {
-    if let Some(parent) = path.as_ref().parent() {
+    let path_buf = path.as_ref().to_path_buf();
+    
+    if let Some(parent) = path_buf.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent).map_err(|e| GeekToolsError::FileOperationError {
                 path: parent.display().to_string(),
@@ -21,10 +76,20 @@ pub fn write(path: impl AsRef<Path>, data: &str) -> Result<()> {
             })?;
         }
     }
-    fs::write(&path, data).map_err(|e| GeekToolsError::FileOperationError {
-        path: path.as_ref().display().to_string(),
+    
+    let result = fs::write(&path_buf, data).map_err(|e| GeekToolsError::FileOperationError {
+        path: path_buf.display().to_string(),
         source: e,
-    })
+    });
+    
+    // 写入成功后，使缓存失效
+    if result.is_ok() {
+        if let Ok(mut cache) = FILE_CACHE.lock() {
+            cache.remove(&path_buf);
+        }
+    }
+    
+    result
 }
 
 /// Write raw bytes to a file, creating parent directories if needed

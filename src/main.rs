@@ -15,19 +15,19 @@ use config::{Config, ConfigManager, CustomScript};
 
 use chrono::Local;
 use once_cell::sync::Lazy;
+#[cfg(feature = "network")]
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::{self, Value};
 use std::process::exit;
 use std::{
-    collections::HashMap,
     env,
     fs::File,
     io::{self, Write},
     path::Path,
     path::PathBuf,
     process::{self, Command},
-    sync::{Arc, Mutex, RwLock},
+    sync::Mutex,
 };
 // 读取build tag
 
@@ -137,37 +137,48 @@ macro_rules! log_only {
     }};
 }
 
-/// 应用程序状态
+/// 应用程序状态 - 精简版，移除未使用字段
 struct AppState {
-    config_manager: ConfigManager,
     current_language: Language,
-    recovery_handler: RecoveryHandler,
 }
 
 impl AppState {
     fn new() -> Result<Self> {
-        let config_manager = ConfigManager::new(CONFIG_PATH.clone())?;
-        let config = config_manager.get_config();
-        let config_read = config.read().unwrap();
-        
-        let current_language = match config_read.language.as_str() {
-            "zh" | "Chinese" => Language::Chinese,
-            _ => Language::English,
-        };
-        
-        let recovery_handler = RecoveryHandler::new(
-            RetryConfig::default(),
-            current_language,
-        );
-        
-        // Initialize logging
-        let _ = init_logging(&config_read.logging, Some(LOG_FILE_PATH.clone()));
+        // 快速启动：延迟加载配置，优先使用环境变量或快速检测
+        let current_language = Self::detect_language_fast();
         
         Ok(Self {
-            config_manager,
             current_language,
-            recovery_handler,
         })
+    }
+    
+    /// 快速语言检测，避免复杂的配置加载
+    fn detect_language_fast() -> Language {
+        // 1. 检查现有配置文件（轻量级）
+        if let Ok(content) = std::fs::read_to_string(&*CONFIG_PATH) {
+            // 匹配实际保存的格式
+            if content.contains("\"language\":\"zh\"") || 
+               content.contains("\"language\":\"Chinese\"") ||
+               content.contains("\"language\": \"zh\"") || 
+               content.contains("\"language\": \"Chinese\"") {
+                return Language::Chinese;
+            }
+        }
+        
+        // 2. 检查环境变量作为备选
+        if let Ok(lang) = env::var("LANG") {
+            if lang.starts_with("zh") || lang.contains("CN") {
+                return Language::Chinese;
+            }
+        }
+        
+        // 3. 默认英文
+        Language::English
+    }
+
+    /// 更新当前语言设置
+    fn update_language(&mut self, language: Language) {
+        self.current_language = language;
     }
 
     // 基础翻译
@@ -263,34 +274,7 @@ struct IpApiResp {
 
 /// 加载或初始化用户语言 (legacy function for backward compatibility)
 fn load_or_init_language() -> Language {
-    // Try to load from the new config system first
-    if let Ok(config_manager) = ConfigManager::new(CONFIG_PATH.clone()) {
-        let config = config_manager.get_config();
-        let config_read = config.read().unwrap();
-        return match config_read.language.as_str() {
-            "zh" => Language::Chinese,
-            _ => Language::English,
-        };
-    }
-
-    // Fallback to IP API detection
-    let default_lang = match Client::new().get("http://ip-api.com/json/").send() {
-        Ok(resp) => {
-            if let Ok(json) = resp.json::<IpApiResp>() {
-                matches!(json.country_code.as_str(), "CN" | "HK" | "MO" | "TW")
-                    .then_some(Language::Chinese)
-                    .unwrap_or(Language::English)
-            } else {
-                Language::English
-            }
-        }
-        Err(err) => {
-            log_eprintln!("IP API request failed: {err}");
-            Language::English
-        }
-    };
-
-    default_lang
+    AppState::detect_language_fast()
 }
 
 
@@ -312,36 +296,44 @@ struct GhRelease {
 // 2️⃣ fetch_releases 内全部 println! → debug_log!
 // ────────────────────────────────────────────────────────────────────────────
 fn fetch_releases() -> std::result::Result<Vec<GhRelease>, GeekToolsError> {
-    let repo = repo_path_from_cargo()?;
-    let url = format!("https://api.github.com/repos/{repo}/releases");
-    debug_log!("[DEBUG] 即将请求 GitHub API: {url}");
+    #[cfg(not(feature = "network"))]
+    return Err(GeekToolsError::ConfigError {
+        message: "Network functionality disabled".to_string(),
+    });
+    
+    #[cfg(feature = "network")]
+    {
+        let repo = repo_path_from_cargo()?;
+        let url = format!("https://api.github.com/repos/{repo}/releases");
+        debug_log!("[DEBUG] 即将请求 GitHub API: {url}");
 
-    let client = reqwest::blocking::Client::builder()
-        .user_agent(format!(
-            "geektools/{} (+{})",
-            env!("CARGO_PKG_VERSION"),
-            "PeterFujiyu/geektools"
-        ))
-        .build()?;
+        let client = reqwest::blocking::Client::builder()
+            .user_agent(format!(
+                "geektools/{} (+{})",
+                env!("CARGO_PKG_VERSION"),
+                "PeterFujiyu/geektools"
+            ))
+            .build()?;
 
-    let resp = client
-        .get(&url)
-        .send()?;
-    debug_log!("[DEBUG] 收到响应，状态码: {}", resp.status());
+        let resp = client
+            .get(&url)
+            .send()?;
+        debug_log!("[DEBUG] 收到响应，状态码: {}", resp.status());
 
-    if !resp.status().is_success() {
-        return Err(GeekToolsError::ConfigError {
-            message: format!("HTTP non-success status: {}", resp.status()),
-        });
+        if !resp.status().is_success() {
+            return Err(GeekToolsError::ConfigError {
+                message: format!("HTTP non-success status: {}", resp.status()),
+            });
+        }
+
+        let text = resp.text()?;
+        debug_log!("[DEBUG] 响应体长度: {}", text.len());
+
+        let releases: Vec<GhRelease> = serde_json::from_str(&text)?;
+        debug_log!("[DEBUG] 解析成功，共 {} 条", releases.len());
+
+        Ok(releases)
     }
-
-    let text = resp.text()?;
-    debug_log!("[DEBUG] 响应体长度: {}", text.len());
-
-    let releases: Vec<GhRelease> = serde_json::from_str(&text)?;
-    debug_log!("[DEBUG] 解析成功，共 {} 条", releases.len());
-
-    Ok(releases)
 }
 
 fn asset_name() -> Option<&'static str> {
@@ -354,18 +346,26 @@ fn asset_name() -> Option<&'static str> {
 }
 
 fn download_and_replace(url: &str) -> std::result::Result<(), GeekToolsError> {
-    let resp = reqwest::blocking::get(url)?;
-    let bytes = resp.bytes()?;
-    let exe = env::current_exe()?;
-    let mut tmp = exe.clone();
-    tmp.set_extension("tmp");
-    fileio::write_bytes(&tmp, &bytes)?;
-    #[cfg(unix)]
+    #[cfg(not(feature = "network"))]
+    return Err(GeekToolsError::ConfigError {
+        message: "Network functionality disabled".to_string(),
+    });
+    
+    #[cfg(feature = "network")]
     {
-        let _ = fileio::set_executable(&tmp);
+        let resp = reqwest::blocking::get(url)?;
+        let bytes = resp.bytes()?;
+        let exe = env::current_exe()?;
+        let mut tmp = exe.clone();
+        tmp.set_extension("tmp");
+        fileio::write_bytes(&tmp, &bytes)?;
+        #[cfg(unix)]
+        {
+            let _ = fileio::set_executable(&tmp);
+        }
+        fileio::rename(&tmp, &exe)?;
+        Ok(())
     }
-    fileio::rename(&tmp, &exe)?;
-    Ok(())
 }
 
 fn update_to_release(release: &GhRelease, app_state: &AppState) {
@@ -516,24 +516,18 @@ fn change_version(app_state: &AppState) {
     }
 }
 
-// ──────────────────────────────── 运行本地脚本 ─────────────────────────────
-fn run_existing_script(app_state: &AppState) {
-    // 0. 清理缓存
-    use std::env;
-
+// 全局复用的临时目录，避免重复创建/删除
+static TMP_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let mut tmp_path = env::temp_dir();
     tmp_path.push("geektools");
-
-    // 如果缓存目录存在则递归删除
-    if tmp_path.exists() {
-        if let Err(e) = fileio::remove_dir(&tmp_path) {
-            log_eprintln!("⚠️  无法删除旧缓存目录 {:?}: {e}", tmp_path);
-        }
-    }
-
-    // 重新创建空目录，忽略已存在的错误
+    // 确保目录存在
     let _ = fileio::create_dir(&tmp_path);
-    log_println!("清理成功 ✅");
+    tmp_path
+});
+
+// ──────────────────────────────── 运行本地脚本 ─────────────────────────────
+fn run_existing_script(app_state: &AppState) {
+    // 性能优化：不再每次都删除临时目录，使用全局复用
     // 1. 读取 info.json（已打包进二进制）
     let data = match scripts::get_string("info.json") {
         Some(s) => s,
@@ -797,8 +791,8 @@ fn run_custom_script_from_url(url: &str, _app_state: &AppState) {
     
     match download_script_content(url) {
         Ok(content) => {
-            let mut tmp_path = env::temp_dir();
             let file_name = format!("custom_script_{}.sh", rand::random::<u64>());
+            let mut tmp_path = TMP_DIR.clone();
             tmp_path.push(file_name);
             
             if let Err(e) = fileio::write(&tmp_path, &content) {
@@ -887,21 +881,7 @@ fn run_sh_scripts_with_deps(paths: &[PathBuf], app_state: &AppState) {
 
 // 处理 .link —— 下载远程脚本后执行
 fn run_link_script(path: &Path, app_state: &AppState) {
-    // 0. 清理缓存
-    use std::env;
-
-    let mut tmp_path = env::temp_dir();
-    tmp_path.push("geektools");
-
-    // 如果缓存目录存在则递归删除
-    if tmp_path.exists() {
-        if let Err(e) = fileio::remove_dir(&tmp_path) {
-            log_eprintln!("⚠️  无法删除旧缓存目录 {:?}: {e}", tmp_path);
-        }
-    }
-
-    // 重新创建空目录，忽略已存在的错误
-    let _ = fileio::create_dir(&tmp_path);
+    // 性能优化：使用全局复用的临时目录
 
     // 1. 读取 URL
     let url = match fileio::read(path) {
@@ -920,6 +900,13 @@ fn run_link_script(path: &Path, app_state: &AppState) {
     );
 
     // 2. 下载
+    #[cfg(not(feature = "network"))]
+    {
+        log_println!("❌ 网络功能已禁用，无法下载脚本");
+        return;
+    }
+    
+    #[cfg(feature = "network")]
     let resp = match reqwest::blocking::get(&url) {
         Ok(r) => r,
         Err(e) => {
@@ -930,6 +917,7 @@ fn run_link_script(path: &Path, app_state: &AppState) {
             return;
         }
     };
+    #[cfg(feature = "network")]
     let content = match resp.text() {
         Ok(t) => t,
         Err(e) => {
@@ -943,8 +931,8 @@ fn run_link_script(path: &Path, app_state: &AppState) {
     };
 
     // 3. 写入临时文件
-
     let file_name = format!("script_{}.sh", rand::random::<u64>());
+    let mut tmp_path = TMP_DIR.clone();
     tmp_path.push(file_name);
     if let Err(e) = fileio::write(&tmp_path, &content) {
         log_println!(
@@ -1009,6 +997,13 @@ fn run_script_from_url(app_state: &AppState) {
         return;
     }
 
+    #[cfg(not(feature = "network"))]
+    {
+        log_println!("❌ 网络功能已禁用，无法下载脚本");
+        return;
+    }
+    
+    #[cfg(feature = "network")]
     match reqwest::blocking::get(url_trimmed) {
         Ok(response) => match response.text() {
             Ok(script_content) => {
@@ -1021,8 +1016,8 @@ fn run_script_from_url(app_state: &AppState) {
                 );
 
                 // 落盘 → chmod → 执行
-                let mut tmp_path = env::temp_dir();
                 let file_name = format!("script_{}.sh", rand::random::<u64>());
+                let mut tmp_path = TMP_DIR.clone();
                 tmp_path.push(file_name);
                 if let Err(e) = fileio::write(&tmp_path, &script_content) {
                     log_println!(
@@ -1164,14 +1159,22 @@ fn show_settings_menu(app_state: &mut AppState) {
                 }
                 match lang_choice.trim() {
                     "1" => {
-                        app_state.current_language = Language::English;
-                        let _ = save_language_to_config(app_state.current_language);
+                        app_state.update_language(Language::English);
+                        if let Err(e) = save_language_to_config(Language::English) {
+                            log_println!("Failed to save language setting: {}", e);
+                        } else {
+                            log_println!("{}", app_state.get_translation("settings_menu.language_saved"));
+                        }
                     }
                     "2" => {
-                        app_state.current_language = Language::Chinese;
-                        let _ = save_language_to_config(app_state.current_language);
+                        app_state.update_language(Language::Chinese);
+                        if let Err(e) = save_language_to_config(Language::Chinese) {
+                            log_println!("Failed to save language setting: {}", e);
+                        } else {
+                            log_println!("{}", app_state.get_translation("settings_menu.language_saved"));
+                        }
                     }
-                    _ => log_println!("{}", app_state.get_translation("main.invalid_language")),
+                    _ => log_println!("{}", app_state.get_translation("main.invalid_choice")),
                 }
             }
             "2" => change_version(app_state),
@@ -1237,15 +1240,23 @@ fn show_security_warning(app_state: &AppState) -> bool {
 
 /// 从URL下载脚本内容
 fn download_script_content(url: &str) -> std::result::Result<String, GeekToolsError> {
-    let resp = reqwest::blocking::get(url)?;
+    #[cfg(not(feature = "network"))]
+    return Err(GeekToolsError::ConfigError {
+        message: "Network functionality disabled".to_string(),
+    });
     
-    if !resp.status().is_success() {
-        return Err(GeekToolsError::ConfigError {
-            message: format!("HTTP error: {}", resp.status()),
-        });
+    #[cfg(feature = "network")]
+    {
+        let resp = reqwest::blocking::get(url)?;
+        
+        if !resp.status().is_success() {
+            return Err(GeekToolsError::ConfigError {
+                message: format!("HTTP error: {}", resp.status()),
+            });
+        }
+        
+        resp.text().map_err(GeekToolsError::from)
     }
-    
-    resp.text().map_err(GeekToolsError::from)
 }
 
 /// 解析脚本内容获取描述信息

@@ -1,5 +1,5 @@
 use crate::fileio;
-use std::{collections::{HashMap, HashSet}, env, io, path::PathBuf};
+use std::{collections::{HashMap, HashSet}, env, io, path::PathBuf, sync::Mutex};
 
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
@@ -26,6 +26,11 @@ static SCRIPTS_DIR: Lazy<PathBuf> = Lazy::new(|| {
     // ignore error if exists
     let _ = fileio::create_dir(&dir);
     dir
+});
+
+/// 依赖解析缓存，避免重复计算
+static DEPENDENCY_CACHE: Lazy<Mutex<HashMap<String, Vec<String>>>> = Lazy::new(|| {
+    Mutex::new(HashMap::new())
 });
 
 /// 创建脚本信息并保存到 info.json
@@ -203,8 +208,15 @@ fn topological_sort(deps: &HashMap<String, Vec<String>>) -> Result<Vec<String>, 
     Ok(result)
 }
 
-/// 递归解析脚本及其依赖
+/// 递归解析脚本及其依赖，带缓存优化
 fn resolve_dependencies(script_name: &str) -> Result<Vec<String>, String> {
+    // 检查缓存
+    if let Ok(cache) = DEPENDENCY_CACHE.lock() {
+        if let Some(cached_result) = cache.get(script_name) {
+            return Ok(cached_result.clone());
+        }
+    }
+    
     let mut deps = HashMap::new();
     let mut to_process = vec![script_name.to_string()];
     let mut processed = HashSet::new();
@@ -229,7 +241,14 @@ fn resolve_dependencies(script_name: &str) -> Result<Vec<String>, String> {
         processed.insert(current);
     }
     
-    topological_sort(&deps)
+    let result = topological_sort(&deps)?;
+    
+    // 缓存结果
+    if let Ok(mut cache) = DEPENDENCY_CACHE.lock() {
+        cache.insert(script_name.to_string(), result.clone());
+    }
+    
+    Ok(result)
 }
 
 /// 把脚本及其依赖按顺序写到 ~/.geektools/scripts/ 目录并返回执行顺序

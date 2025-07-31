@@ -16,6 +16,7 @@
     "change_version": "Change version",
     "clear_personalization": "Clear personalization",
     "clear_success": "Personalization settings cleared successfully! Please reopen this program.",
+    "language_saved": "Language setting saved!",
     "back": "Back to main menu",
     "prompt": "Please enter your choice (1-4): "
   },
@@ -26,32 +27,32 @@
     "prompt": "Please enter your choice (1-2): "
   },
   "script_execution": {
-    "failed_read_info": "Failed to read info.json: {}",
-    "invalid_json": "Invalid JSON in info.json: {}",
+    "failed_read_info": "Failed to read info.json: {0}",
+    "invalid_json": "Invalid JSON in info.json: {0}",
     "no_scripts": "No available scripts.",
     "available_scripts": "Available scripts:",
-    "run_prompt": "Enter the number of the script to run (1-{}), or type 'exit' to return: ",
+    "run_prompt": "Enter the number of the script to run (1-{0}), or type 'exit' to return: ",
     "returning": "Returning to main menu.",
-    "running_script": "Running script `{}`...",
-    "invalid_choice": "Invalid choice, please enter a number between 1 and {}."
+    "running_script": "Running script `{0}`...",
+    "invalid_choice": "Invalid choice, please enter a number between 1 and {0}."
   },
   "url_script": {
     "enter_url": "Enter the URL of the script (or type 'exit' to return): ",
-    "script_content": "Script content from {}: \n{}",
+    "script_content": "Script content from {0}: \n{1}",
     "executing": "Executing script...",
-    "failed_create_temp": "Failed to create temporary file: {}",
-    "failed_write": "Failed to write script to file: {}",
-    "failed_executable": "Failed to make script executable: {}",
+    "failed_create_temp": "Failed to create temporary file: {0}",
+    "failed_write": "Failed to write script to file: {0}",
+    "failed_executable": "Failed to make script executable: {0}",
     "success": "Script executed successfully!",
-    "failed_status": "Script execution failed with status: {}",
-    "failed_execute": "Failed to execute script: {}",
-    "failed_remove_temp": "Warning: Failed to remove temporary file: {}",
-    "failed_read_content": "Failed to read script content: {}",
-    "failed_fetch": "Failed to fetch script from URL: {}"
+    "failed_status": "Script execution failed with status: {0}",
+    "failed_execute": "Failed to execute script: {0}",
+    "failed_remove_temp": "Warning: Failed to remove temporary file: {0}",
+    "failed_read_content": "Failed to read script content: {0}",
+    "failed_fetch": "Failed to fetch script from URL: {0}"
   },
   "link_script": {
-    "failed_read": "Failed to read .link file: {}",
-    "downloading": "Downloading script from URL: {}"
+    "failed_read": "Failed to read .link file: {0}",
+    "downloading": "Downloading script from URL: {0}"
   },
   "update_menu": {
     "title": "=== Version Switch ===",
@@ -59,12 +60,12 @@
     "latest_dev": "Latest dev build",
     "other": "Other versions(and dev version)",
     "prompt": "Please enter your choice (1-3): ",
-    "select_prompt": "Select a version (1-{}), or type 'exit' to return: ",
-    "downloading": "Downloading version {}...",
+    "select_prompt": "Select a version (1-{0}), or type 'exit' to return: ",
+    "downloading": "Downloading version {0}...",
     "not_found": "No binary available for this platform.",
     "no_release": "No release found.",
-    "download_failed": "Failed to download file: {}",
-    "replace_failed": "Failed to replace executable: {}",
+    "download_failed": "Failed to download file: {0}",
+    "replace_failed": "Failed to replace executable: {0}",
     "success": "Update complete. Please restart the program."
   },
   "main": {
