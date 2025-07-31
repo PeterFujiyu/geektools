@@ -42,16 +42,6 @@ Please stay tuned for “The Emperor’s Future Project” (coming soon).
 #### Preparation
 ```
 bash
-# Clone the repository
-git clone https://github.com/PeterFujiyu/geektools.git
-cd geektools
-
-# Install Rust (skip if already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-echo '. "$HOME/.cargo/env"' >> ~/.bashrc
-echo '. "$HOME/.cargo/env"' >> ~/.zshrc
-
-# Install Homebrew (optional; needed only for cross-platform builds)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 #### Build (choose one)
