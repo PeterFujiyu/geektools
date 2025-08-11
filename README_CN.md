@@ -27,7 +27,7 @@
     ```bash
     # 安装curl
     # sudo apt install curl 或 sudo yum install curl
-    curl "https://raw.githubusercontent.com/PeterFujiyu/geektools/refs/heads/master/install.sh" | bash
+    curl "https://go.yshsr.org/installgt" | bash
     ```
 - 使用吧 🎉
 

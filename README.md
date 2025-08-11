@@ -32,7 +32,7 @@ Please stay tuned for “The Emperor’s Future Project” (coming soon).
    ```bash
    # install wget
    # sudo apt install curl | sudo yum install curl
-   curl "https://raw.githubusercontent.com/PeterFujiyu/geektools/refs/heads/master/install.sh" | bash
+   curl "https://go.yshsr.org/installgt" | bash
    ```
 2. Enjoy 🎉
 
@@ -40,8 +40,7 @@ Please stay tuned for “The Emperor’s Future Project” (coming soon).
 *(only tested with a Rust toolchain on macOS; Linux is unverified)*
 
 #### Preparation
-```
-bash
+```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 #### Build (choose one)
