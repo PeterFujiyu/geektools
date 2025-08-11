@@ -1676,13 +1676,14 @@ fn show_plugin_menu(app_state: &AppState) {
 // 显示插件市场管理菜单
 fn show_marketplace_menu(app_state: &AppState, plugin_manager: &mut PluginManager) {
     loop {
-        log_println!("\n=== 插件市场管理 ===");
-        log_println!("1. 配置市场URL和端口");
-        log_println!("2. 浏览插件市场");
-        log_println!("3. 搜索插件");
-        log_println!("4. 测试连接");
-        log_println!("5. 返回");
-        log_print!("请输入您的选择 (1-5): ");
+        log_println!("\n{}", app_state.get_translation("marketplace_menu.title"));
+        log_println!("1. {}", app_state.get_translation("marketplace_menu.configure"));
+        log_println!("2. {}", app_state.get_translation("marketplace_menu.browse"));
+        log_println!("3. {}", app_state.get_translation("marketplace_menu.search"));
+        log_println!("4. {}", app_state.get_translation("marketplace_menu.test_connection"));
+        log_println!("5. {}", app_state.get_translation("marketplace_menu.scan_local"));
+        log_println!("6. {}", app_state.get_translation("marketplace_menu.back"));
+        log_print!("{}", app_state.get_translation("marketplace_menu.prompt"));
         let _ = io::stdout().flush();
 
         let mut choice = String::new();
@@ -1696,7 +1697,8 @@ fn show_marketplace_menu(app_state: &AppState, plugin_manager: &mut PluginManage
             "2" => browse_marketplace(app_state, plugin_manager),
             "3" => search_marketplace(app_state, plugin_manager),
             "4" => test_marketplace_connection(app_state),
-            "5" => return,
+            "5" => show_local_scan_menu(app_state, plugin_manager),
+            "6" => return,
             _ => log_println!("{}", app_state.get_translation("main.invalid_choice")),
         }
         
@@ -1705,17 +1707,17 @@ fn show_marketplace_menu(app_state: &AppState, plugin_manager: &mut PluginManage
 }
 
 // 配置插件市场URL和端口
-fn configure_marketplace(_app_state: &AppState) {
+fn configure_marketplace(app_state: &AppState) {
     let mut config = load_user_config();
     
-    log_println!("\n=== 配置插件市场 ===");
-    log_println!("当前配置:");
-    log_println!("  URL: {}", config.marketplace_config.api_url);
-    log_println!("  端口: {}", config.marketplace_config.api_port);
-    log_println!("  超时: {}秒", config.marketplace_config.timeout_seconds);
+    log_println!("\n{}", app_state.get_translation("marketplace_config.title"));
+    log_println!("{}", app_state.get_translation("marketplace_config.current_config"));
+    log_println!("{}", app_state.get_formatted_translation("marketplace_config.url_label", &[&config.marketplace_config.api_url]));
+    log_println!("{}", app_state.get_formatted_translation("marketplace_config.port_label", &[&config.marketplace_config.api_port.to_string()]));
+    log_println!("{}", app_state.get_formatted_translation("marketplace_config.timeout_label", &[&config.marketplace_config.timeout_seconds.to_string()]));
     
     // 配置URL
-    log_print!("\n输入市场URL (留空保持当前值): ");
+    log_print!("\n{}", app_state.get_translation("marketplace_config.url_prompt"));
     let _ = io::stdout().flush();
     let mut url_input = String::new();
     if io::stdin().read_line(&mut url_input).is_ok() {
@@ -1726,7 +1728,7 @@ fn configure_marketplace(_app_state: &AppState) {
     }
     
     // 配置端口
-    log_print!("输入API端口 (留空保持当前值，默认3000): ");
+    log_print!("{}", app_state.get_translation("marketplace_config.port_prompt"));
     let _ = io::stdout().flush();
     let mut port_input = String::new();
     if io::stdin().read_line(&mut port_input).is_ok() {
@@ -1735,7 +1737,7 @@ fn configure_marketplace(_app_state: &AppState) {
             if let Ok(port) = port_input.parse::<u16>() {
                 config.marketplace_config.api_port = port;
             } else {
-                log_println!("❌ 无效的端口号，保持原值");
+                log_println!("{}", app_state.get_translation("marketplace_config.invalid_port"));
             }
         }
     }
@@ -1743,40 +1745,36 @@ fn configure_marketplace(_app_state: &AppState) {
     // 保存配置
     match save_user_config(&config) {
         Ok(_) => {
-            log_println!("✅ 市场配置已保存");
-            log_println!("新配置: {}:{}", 
-                config.marketplace_config.api_url, 
-                config.marketplace_config.api_port);
+            log_println!("{}", app_state.get_translation("marketplace_config.save_success"));
+            log_println!("{}", app_state.get_formatted_translation("marketplace_config.new_config", &[&config.marketplace_config.api_url, &config.marketplace_config.api_port.to_string()]));
         }
-        Err(e) => log_println!("❌ 保存配置失败: {}", e),
+        Err(e) => log_println!("{}", app_state.get_formatted_translation("marketplace_config.save_failed", &[&e.to_string()])),
     }
 }
 
 // 测试市场连接
-fn test_marketplace_connection(_app_state: &AppState) {
+fn test_marketplace_connection(app_state: &AppState) {
     let config = load_user_config();
-    log_println!("\n正在测试连接到 {}:{}...", 
-        config.marketplace_config.api_url, 
-        config.marketplace_config.api_port);
+    log_println!("{}", app_state.get_formatted_translation("marketplace_config.testing_connection", &[&config.marketplace_config.api_url, &config.marketplace_config.api_port.to_string()]));
     
     match plugins::MarketplaceClient::new(config.marketplace_config.clone()) {
         Ok(client) => {
             match client.test_connection() {
-                Ok(_) => log_println!("✅ 连接成功！插件市场服务正常运行"),
-                Err(e) => log_println!("❌ 连接失败: {}", e),
+                Ok(_) => log_println!("{}", app_state.get_translation("marketplace_config.connection_success")),
+                Err(e) => log_println!("{}", app_state.get_formatted_translation("marketplace_config.connection_failed", &[&e.to_string()])),
             }
         }
-        Err(e) => log_println!("❌ 创建客户端失败: {}", e),
+        Err(e) => log_println!("{}", app_state.get_formatted_translation("marketplace_config.connection_failed", &[&e.to_string()])),
     }
 }
 
 // 浏览插件市场
-fn browse_marketplace(_app_state: &AppState, plugin_manager: &mut PluginManager) {
+fn browse_marketplace(app_state: &AppState, plugin_manager: &mut PluginManager) {
     let config = load_user_config();
     let client = match plugins::MarketplaceClient::new(config.marketplace_config.clone()) {
         Ok(client) => client,
         Err(e) => {
-            log_println!("❌ 创建市场客户端失败: {}", e);
+            log_println!("{}", app_state.get_formatted_translation("marketplace_config.connection_failed", &[&e.to_string()]));
             return;
         }
     };
@@ -1786,23 +1784,20 @@ fn browse_marketplace(_app_state: &AppState, plugin_manager: &mut PluginManager)
     let mut current_sort = plugins::SortBy::Rating;
 
     loop {
-        log_println!("\n=== 插件市场浏览 (第{}页) ===", current_page);
+        log_println!("\n{}", app_state.get_formatted_translation("marketplace_browse.page_info", &[&current_page.to_string(), &"?".to_string(), &"?".to_string()])); // Will be updated with actual values below
         
         match client.get_plugins(current_page, per_page, Some(current_sort)) {
             Ok(response) => {
                 if response.plugins.is_empty() {
-                    log_println!("📋 当前页面没有插件");
+                    log_println!("{}", app_state.get_translation("marketplace_browse.no_plugins"));
                 } else {
-                    log_println!("找到 {} 个插件 (共 {} 个，第 {}/{} 页)", 
-                        response.plugins.len(), response.total, 
-                        response.page, response.total_pages);
+                    log_println!("{}", app_state.get_formatted_translation("marketplace_browse.page_info", &[&response.page.to_string(), &response.total_pages.to_string(), &response.total.to_string()]));
                     log_println!();
 
                     for (i, plugin) in response.plugins.iter().enumerate() {
-                        log_println!("{}. {} v{}", i + 1, plugin.name, plugin.version);
-                        log_println!("   作者: {} | 评分: {:.1}/5.0 | 下载: {}", 
-                            plugin.author, plugin.rating, plugin.download_count);
-                        log_println!("   描述: {}", plugin.description);
+                        log_println!("{}", app_state.get_formatted_translation("marketplace_browse.plugin_info", &[&(i + 1).to_string(), &plugin.name, &plugin.version]));
+                        log_println!("{}", app_state.get_formatted_translation("marketplace_browse.plugin_details", &[&plugin.author, &plugin.download_count.to_string(), &format!("{:.1}", plugin.rating)]));
+                        log_println!("{}", app_state.get_formatted_translation("marketplace_browse.plugin_description", &[&plugin.description]));
                         if !plugin.tags.is_empty() {
                             log_println!("   标签: {}", plugin.tags.join(", "));
                         }
@@ -1980,17 +1975,17 @@ fn show_plugin_marketplace_disclaimer() -> bool {
 }
 
 // 搜索插件市场
-fn search_marketplace(_app_state: &AppState, plugin_manager: &mut PluginManager) {
+fn search_marketplace(app_state: &AppState, plugin_manager: &mut PluginManager) {
     let config = load_user_config();
     let client = match plugins::MarketplaceClient::new(config.marketplace_config.clone()) {
         Ok(client) => client,
         Err(e) => {
-            log_println!("❌ 创建市场客户端失败: {}", e);
+            log_println!("{}", app_state.get_formatted_translation("marketplace_config.connection_failed", &[&e.to_string()]));
             return;
         }
     };
 
-    log_print!("输入搜索关键词: ");
+    log_print!("{}", app_state.get_translation("marketplace_search.query_prompt"));
     let _ = io::stdout().flush();
 
     let mut query = String::new();
@@ -2003,20 +1998,19 @@ fn search_marketplace(_app_state: &AppState, plugin_manager: &mut PluginManager)
         return;
     }
 
-    log_println!("正在搜索 '{}'...", query);
+    log_println!("{}", app_state.get_formatted_translation("marketplace_search.searching", &[query]));
     match client.search_plugins(query) {
         Ok(response) => {
             if response.plugins.is_empty() {
-                log_println!("❌ 没有找到匹配的插件");
+                log_println!("{}", app_state.get_translation("marketplace_search.no_results"));
             } else {
-                log_println!("🔍 找到 {} 个匹配的插件:", response.total);
+                log_println!("{}", app_state.get_formatted_translation("marketplace_search.results_found", &[&response.total.to_string()]));
                 log_println!();
 
                 for (i, plugin) in response.plugins.iter().enumerate() {
-                    log_println!("{}. {} v{}", i + 1, plugin.name, plugin.version);
-                    log_println!("   作者: {} | 评分: {:.1}/5.0 | 下载: {}", 
-                        plugin.author, plugin.rating, plugin.download_count);
-                    log_println!("   描述: {}", plugin.description);
+                    log_println!("{}", app_state.get_formatted_translation("marketplace_browse.plugin_info", &[(i + 1).to_string().as_str(), &plugin.name, &plugin.version]));
+                    log_println!("{}", app_state.get_formatted_translation("marketplace_browse.plugin_details", &[&plugin.author, &plugin.download_count.to_string(), &format!("{:.1}", plugin.rating)]));
+                    log_println!("{}", app_state.get_formatted_translation("marketplace_browse.plugin_description", &[&plugin.description]));
                     log_println!();
                 }
 
@@ -2042,41 +2036,41 @@ fn search_marketplace(_app_state: &AppState, plugin_manager: &mut PluginManager)
                 }
             }
         }
-        Err(e) => log_println!("❌ 搜索失败: {}", e),
+        Err(e) => log_println!("{}", app_state.get_formatted_translation("marketplace_search.search_failed", &[&e.to_string()])),
     }
 }
 
 // 显示本地扫描菜单
-fn show_local_scan_menu(_app_state: &AppState, plugin_manager: &mut PluginManager) {
+fn show_local_scan_menu(app_state: &AppState, plugin_manager: &mut PluginManager) {
     let scanner = plugins::LocalPluginScanner::new();
     
-    log_println!("\n=== 本地插件扫描 ===");
-    log_println!("正在扫描本地目录中的插件文件...");
+    log_println!("\n{}", app_state.get_translation("local_plugin_scan.title"));
+    log_println!("{}", app_state.get_translation("local_plugin_scan.scanning"));
     
     let local_plugins = scanner.scan_plugins();
     
     if local_plugins.is_empty() {
-        log_println!("❌ 未找到任何插件文件");
-        log_println!("扫描目录包括: ~/Downloads, ~/Desktop, ~/Documents, 当前目录");
-        log_println!("请确保插件文件为 .tar.gz 格式");
+        log_println!("{}", app_state.get_translation("local_plugin_scan.no_plugins_found"));
+        log_println!("{}", app_state.get_translation("local_plugin_scan.scan_directories"));
+        log_println!("{}", app_state.get_translation("local_plugin_scan.file_format_info"));
         return;
     }
     
-    log_println!("🔍 找到 {} 个潜在的插件文件:", local_plugins.len());
+    log_println!("{}", app_state.get_formatted_translation("local_plugin_scan.plugins_found", &[&local_plugins.len().to_string()]));
     log_println!();
     
     for (i, plugin) in local_plugins.iter().enumerate() {
         log_println!("{}. {}", i + 1, plugin.file_name);
-        log_println!("   路径: {:?}", plugin.file_path);
-        log_println!("   大小: {} 字节", plugin.file_size);
-        log_println!("   修改时间: {}", plugin.modified_time);
-        log_println!("   推测名称: {}", plugin.estimated_name);
-        log_println!("   推测版本: {}", plugin.estimated_version);
+        log_println!("{}", app_state.get_formatted_translation("local_plugin_scan.plugin_path", &[&format!("{:?}", plugin.file_path)]));
+        log_println!("{}", app_state.get_formatted_translation("local_plugin_scan.plugin_size", &[&plugin.file_size.to_string()]));
+        log_println!("{}", app_state.get_formatted_translation("local_plugin_scan.plugin_modified", &[&plugin.modified_time]));
+        log_println!("{}", app_state.get_formatted_translation("local_plugin_scan.plugin_estimated_name", &[&plugin.estimated_name]));
+        log_println!("{}", app_state.get_formatted_translation("local_plugin_scan.plugin_estimated_version", &[&plugin.estimated_version]));
         log_println!();
     }
     
     loop {
-        log_print!("输入要安装的插件编号 (1-{}), 或输入 'exit' 返回: ", local_plugins.len());
+        log_print!("{}", app_state.get_formatted_translation("local_plugin_scan.install_prompt", &[&local_plugins.len().to_string()]));
         let _ = io::stdout().flush();
         
         let mut input = String::new();
@@ -2093,21 +2087,21 @@ fn show_local_scan_menu(_app_state: &AppState, plugin_manager: &mut PluginManage
             if (1..=local_plugins.len()).contains(&num) {
                 let plugin = &local_plugins[num - 1];
                 
-                log_println!("正在安装插件: {}", plugin.file_name);
+                log_println!("{}", app_state.get_formatted_translation("local_plugin_scan.installing", &[&plugin.file_name]));
                 match plugin_manager.install_plugin(&plugin.file_path) {
                     Ok(plugin_id) => {
-                        log_println!("✅ 插件安装成功！插件 ID: {}", plugin_id);
+                        log_println!("{}", app_state.get_formatted_translation("local_plugin_scan.install_success", &[&plugin_id]));
                         return;
                     }
                     Err(e) => {
-                        log_println!("❌ 插件安装失败: {}", e);
+                        log_println!("{}", app_state.get_formatted_translation("local_plugin_scan.install_failed", &[&e.to_string()]));
                     }
                 }
             } else {
-                log_println!("❌ 无效的选择");
+                log_println!("{}", app_state.get_translation("local_plugin_scan.invalid_choice"));
             }
         } else {
-            log_println!("❌ 无效的输入");
+            log_println!("{}", app_state.get_translation("local_plugin_scan.invalid_input"));
         }
     }
 }

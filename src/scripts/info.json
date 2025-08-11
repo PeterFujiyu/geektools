@@ -14,17 +14,5 @@
   "cleanmac.link": {
     "English": "Clean macOS cache and other trash files lastest version",
     "Chinese": "清理macOS的垃圾文件,最新版本"
-  },
-  "installbrew.sh": {
-    "English": "Install Homebrew with optional mirror",
-    "Chinese": "安装Homebrew，并可选择国内镜像"
-  },
-  "common.sh": {
-    "English": "Common utility functions library",
-    "Chinese": "通用工具函数库"
-  },
-  "test_import.sh": {
-    "English": "Test script import functionality",
-    "Chinese": "测试脚本导入功能"
   }
 }

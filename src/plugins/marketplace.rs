@@ -120,8 +120,8 @@ pub struct MarketplaceConfig {
 impl Default for MarketplaceConfig {
     fn default() -> Self {
         Self {
-            api_url: "http://localhost".to_string(),
-            api_port: 3000,
+            api_url: "https://market-api.yshsr.org".to_string(),
+            api_port: 443,
             timeout_seconds: 30,
         }
     }
