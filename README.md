@@ -32,7 +32,7 @@ Please stay tuned for “The Emperor’s Future Project” (coming soon).
    ```bash
    # install wget
    # sudo apt install curl | sudo yum install curl
-   curl "https://go.yshsr.org/installgt" | bash
+   curl "https://raw.githubusercontent.com/PeterFujiyu/geektools/refs/heads/master/install.sh" | bash
    ```
 2. Enjoy 🎉
 
