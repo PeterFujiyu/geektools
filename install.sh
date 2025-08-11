@@ -83,31 +83,12 @@ curl -fL -o "$FILE" "$URL" || { echo "❌ 下载失败"; exit 1; }
 chmod +x "$FILE"
 
 # ───── 安装 ────────────────────────────────────────────────────
-echo
-echo "请选择安装范围："
-echo "  1) 仅当前用户（安装到 \$HOME/bin，默认）"
-echo "  2) 所有用户   （安装到 /usr/local/bin，需要 sudo）"
-read -rp "请输入 1 或 2 后回车 [默认 1]: " CHOICE
-CHOICE=${CHOICE:-1}
-
-if [[ $CHOICE == 1 ]]; then
-  DEST_DIR="$HOME/bin"
-  mkdir -p "$DEST_DIR"
-  mv "$FILE" "$DEST_DIR/geektools"
-  ln -sf "$DEST_DIR/geektools" "$DEST_DIR/gt"
-  echo "✅ 已安装到 $DEST_DIR/geektools"
-  if [[ ":$PATH:" != *":$DEST_DIR:"* ]]; then
-    echo "${HOME}/bin:$PATH" >> ~/.bashrc
-    echo "${HOME}/bin:$PATH" >> ~/.zshrc
-    source ~/.bashrc
-    source ~/.zshrc
-  fi
-elif [[ $CHOICE == 2 ]]; then
-  sudo mv "$FILE" /usr/local/bin/geektools
-  sudo ln -sf /usr/local/bin/geektools /usr/bin/geektools || true
-  echo "✅ 已安装到 /usr/local/bin/geektools"
-else
-  echo "❌ 输入无效，退出"; exit 1
-fi
+mkdir -p "${HOME}/.local/bin/"
+mv "$FILE" "${HOME}/.local/bin/"
+ln -s "${HOME}/.local/bin/${FILE}" "${HOME}/.local/bin/gt"
+echo "export PATH=$PATH:${HOME}/.local/bin" >> ~/.bashrc
+echo "export PATH=$PATH:${HOME}/.local/bin" >> ~/.zshrc
+. ~/.bashrc
+. ~/.zshrc
 
 echo "🎉 完成！现在可以直接运行 geektools（或 gt）"
