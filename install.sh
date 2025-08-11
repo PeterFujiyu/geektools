@@ -1,94 +1,129 @@
 #!/usr/bin/env bash
 
-# 若被 /bin/sh 等非-bash 解释器调用，自动切换到 bash
-[ -n "${BASH_VERSION:-}" ] || { exec bash "$0" "$@"; }
-# Geektools 一键安装脚本
+
 set -euo pipefail
 
 REPO="PeterFujiyu/geektools"
 
-# ───── 获取最新 tag ─────────────────────────────────────────────
-get_tag_from_api() {
-  # 先尝试 latest（正式），失败再退回到第一页（可能是 Pre-release）
-  local api_latest="https://api.github.com/repos/${REPO}/releases/latest"
-  local api_all="https://api.github.com/repos/${REPO}/releases?per_page=1"
+# ---------- 工具函数 ----------
+has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+# curl 统一封装（自动带上 GH_TOKEN）
+curl_gh() {
   if [[ -n "${GH_TOKEN:-}" ]]; then
-    curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" "$api_latest" \
-      || curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" "$api_all"
+    curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" "$@"
   else
-    { curl -fsSL -s "$api_latest" 2>/dev/null || curl -fsSL -s "$api_all" 2>/dev/null; } \
-      || echo "ERROR: Failed to fetch from API"
-  fi | grep -m1 '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+    curl -fsSL "$@"
+  fi
+}
+
+# ---------- 获取 tag（API → 跳转双保险） ----------
+get_tag_from_api() {
+  # 先 latest（正式），失败退回 releases 列表第一页
+  curl_gh "https://api.github.com/repos/${REPO}/releases/latest" \
+    | grep -m1 '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || \
+  curl_gh "https://api.github.com/repos/${REPO}/releases?per_page=1" \
+    | grep -m1 '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
 }
 
 get_tag_from_redirect() {
+  # 用 302 跳转定位真实 tag
   local url
-  url=$(curl -fsIL -o /dev/null -w '%{url_effective}' \
-        "https://github.com/${REPO}/releases/latest") || return 1
-  sed -E 's#.*/releases/tag/([^/]+).*#\1#' <<<"$url"
+  url=$(curl_gh -I "https://github.com/${REPO}/releases/latest" \
+        | grep -im1 '^location:' | awk '{print $2}' | tr -d '\r') || return 1
+  sed -E 's#.*/releases/tag/([^/[:space:]]+).*#\1#' <<<"$url"
 }
 
 TAG="${TAG_OVERRIDE:-}"
+[[ -z "${TAG}" ]] && TAG="$(get_tag_from_api || true)"
+[[ -z "${TAG}" ]] && TAG="$(get_tag_from_redirect || true)"
 
-[[ -z $TAG ]] && TAG=$(get_tag_from_api     || true)
-[[ -z $TAG ]] && TAG=$(get_tag_from_redirect|| true)
-
-if [[ -z $TAG ]]; then
+if [[ -z "${TAG}" ]]; then
   read -rp "⚠️  无法自动获取版本号，请手动输入（如 v1.2.3）: " TAG
 fi
-[[ -z $TAG ]] && { echo "❌ 无法确定版本号，安装终止"; exit 1; }
+[[ -z "${TAG}" ]] && { echo "❌ 无法确定版本号，安装终止"; exit 1; }
 
-echo "➡️  最新版本: $TAG"
+echo "➡️  版本: $TAG"
 
-# ───── 选择产物文件名 ───────────────────────────────────────────
+# ---------- 选择产物 ----------
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
+
 case "$OS" in
   linux)
     case "$ARCH" in
-      x86_64|amd64) FILE="geektools-linux-x64" ;;
-      aarch64|arm64) FILE="geektools-linux-arm64" ;;
+      x86_64|amd64)   FILE="geektools-linux-x64" ;;
+      aarch64|arm64)  FILE="geektools-linux-arm64" ;;
+      armv7l|armv6l)  FILE="geektools-linux-armhf" ;;  # 若无此产物会在下载时报错
       *) echo "❌ 不支持的 Linux 架构: $ARCH"; exit 1 ;;
-    esac ;;
-  darwin) FILE="geektools-macos-universal" ;;
-  *) echo "❌ 不支持的操作系统: $OS"; exit 1 ;;
+    esac
+    ;;
+  darwin)
+    FILE="geektools-macos-universal"
+    ;;
+  *)
+    echo "❌ 不支持的操作系统: $OS"
+    exit 1
+    ;;
 esac
 
-# 0) 准备 curl 头部数组（即使没有令牌也要初始化，避免 “header[@] 未定义”）
-header=()
-if [[ -n "${GH_TOKEN:-}" ]]; then
-  header=(-H "Authorization: Bearer ${GH_TOKEN}")
-fi
+VERSION="$TAG"
+URL="https://github.com/${REPO}/releases/download/${VERSION}/${FILE}"
 
-# 1) 获取最新 tag（API → 跳转双保险）
-get_latest_tag() {
-  # 尝试 GitHub API
-  curl -fsSL "${header[@]}" \
-       "https://api.github.com/repos/${REPO}/releases/latest" |
-    grep -m1 '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' && return 0
+# ---------- 下载 ----------
+echo "⬇️  下载: $URL"
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+dst="$tmpdir/$FILE"
 
-  # 若失败再用 302 跳转解析
-  curl -fsIL "${header[@]}" \
-       "https://github.com/${REPO}/releases/latest" |
-    grep -im1 '^location:' | sed -E 's#.*/tag/([^[:space:]]+).*#\1#'
+# 重试以适配偶发网络波动
+curl_gh --retry 3 --retry-delay 2 -o "$dst" "$URL" \
+  || { echo "❌ 下载失败（可能是该架构无对应产物或 tag 不存在）"; exit 1; }
+chmod +x "$dst"
+
+# ---------- 安装 ----------
+bindir="${HOME}/.local/bin"
+mkdir -p "$bindir"
+
+# 统一命名为 geektools，并提供 gt 的别名
+install_path="${bindir}/geektools"
+mv -f "$dst" "$install_path"
+ln -sfn "$install_path" "${bindir}/gt"
+
+# ---------- 配置 PATH（幂等） ----------
+add_path_line='export PATH="$HOME/.local/bin:$PATH"'
+ensure_path_in() {
+  local rc="$1"
+  [[ -f "$rc" ]] || return 0
+  if ! grep -Fq '.local/bin' "$rc"; then
+    printf '\n# added by geektools installer\n%s\n' "$add_path_line" >> "$rc"
+  fi
 }
 
-# 复用前面已拿到的 $TAG（避免重复获取失败）
-VERSION="$TAG"
-# 2) 拼出正确的下载地址
-URL="https://github.com/${REPO}/releases/download/${VERSION}/${FILE}"
-echo "⬇️  正在下载: $URL"
-curl -fL -o "$FILE" "$URL" || { echo "❌ 下载失败"; exit 1; }
-chmod +x "$FILE"
+# 按当前用户常见 rc 文件写入，但不 source（避免 bash 去跑 zsh 语法）
+shell_name="$(ps -p $$ -o comm= 2>/dev/null || echo bash)"
 
-# ───── 安装 ────────────────────────────────────────────────────
-mkdir -p "${HOME}/.local/bin/"
-mv "$FILE" "${HOME}/.local/bin/"
-ln -s "${HOME}/.local/bin/${FILE}" "${HOME}/.local/bin/gt"
-echo "export PATH=$PATH:${HOME}/.local/bin" >> ~/.bashrc
-echo "export PATH=$PATH:${HOME}/.local/bin" >> ~/.zshrc
-. ~/.bashrc
-. ~/.zshrc
+case "$shell_name" in
+  zsh)
+    ensure_path_in "${HOME}/.zshrc"
+    ;;
+  bash)
+    # 兼容 Debian/Ubuntu（~/.bashrc）与 macOS（~/.bash_profile）
+    ensure_path_in "${HOME}/.bashrc"
+    ensure_path_in "${HOME}/.bash_profile"
+    ;;
+  *)
+    # 兜底都写一份
+    ensure_path_in "${HOME}/.profile"
+    ensure_path_in "${HOME}/.bashrc"
+    ensure_path_in "${HOME}/.zshrc"
+    ;;
+esac
 
-echo "🎉 完成！现在可以直接运行 geektools（或 gt）"
+echo
+echo "✅ 安装完成：${install_path}"
+echo "👉 别名：${bindir}/gt"
+echo "ℹ️  若新开终端仍找不到命令，请手动执行："
+echo "   ${add_path_line}"
+echo
+echo "🚀 现在可以运行：geektools  或  gt"
