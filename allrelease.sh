@@ -22,6 +22,8 @@ need x86_64-linux-musl-gcc FiloSottile/musl-cross/musl-cross \
      "编译 x86_64-unknown-linux-musl 需要 musl-gcc"
 need aarch64-linux-musl-gcc FiloSottile/musl-cross/musl-cross \
      "编译 aarch64-unknown-linux-musl 需要 musl-gcc"
+need arm-linux-musleabihf-gcc FiloSottile/musl-cross/musl-cross \
+     "编译 armv7-unknown-linux-musleabihf 需要 musl-gcc"
 
 # UPX（可选）
 if command -v upx >/dev/null; then
@@ -33,7 +35,8 @@ fi
 # ───── 1. rustup target 确保齐全 ─────────────────────────────────
 rustup target add \
   x86_64-apple-darwin aarch64-apple-darwin \
-  x86_64-unknown-linux-musl aarch64-unknown-linux-musl >/dev/null
+  x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
+  armv7-unknown-linux-musleabihf >/dev/null
 
 # ───── 2. 保留编译缓存，仅清理 dist ───────────────────────────────
 echo "🧹 Cleaning old dist..."
@@ -88,6 +91,7 @@ rm target/tmp-mac-*
 # ───── 5. Linux (musl 静态) ──────────────────────────────────────
 build x86_64-unknown-linux-musl "$RELEASE_DIR/${PROJECT_NAME}-linux-x64"
 build aarch64-unknown-linux-musl "$RELEASE_DIR/${PROJECT_NAME}-linux-arm64"
+build armv7-unknown-linux-musleabihf "$RELEASE_DIR/${PROJECT_NAME}-linux-armhf"
 
 echo "✅  Artifacts in $RELEASE_DIR"
 ls -lh "$RELEASE_DIR"
